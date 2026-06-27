@@ -42,7 +42,7 @@ export class SaasEntitlementsService {
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
-      price: Math.round(r.priceCents / 100),
+      price: r.priceCents,
       billing_cycle: r.interval,
       features: [],
     }));
@@ -60,7 +60,7 @@ export class SaasEntitlementsService {
         name: input.plan_name.trim(),
         code,
         interval: input.billing_cycle.trim().toLowerCase(),
-        priceCents: input.price * 100,
+        priceCents: input.price,
         isActive: true,
         saasTier: null,
       },
@@ -69,7 +69,7 @@ export class SaasEntitlementsService {
     return {
       id: row.id,
       name: row.name,
-      price: Math.round(row.priceCents / 100),
+      price: row.priceCents,
       billing_cycle: row.interval,
       features: input.features ?? [],
     };

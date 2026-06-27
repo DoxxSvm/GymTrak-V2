@@ -1,8 +1,22 @@
 node_modules/
 dist/
-.env
-.env.local
 coverage/
+uploads/
+secrets/*
+!secrets/*.example
 *.log
 .DS_Store
 .vscode/
+.cursor/
+
+# Environment (never commit real values)
+.env
+.env.*
+!.env.example
+
+# Firebase / cloud credentials (never commit)
+*-firebase-adminsdk-*.json
+*.pem
+*.p12
+*.key
+service-account*.json

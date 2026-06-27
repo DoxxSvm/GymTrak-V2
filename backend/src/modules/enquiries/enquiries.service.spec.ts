@@ -1,3 +1,4 @@
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EnquiryStatus } from '@prisma/client';
 import { GymAccessService } from '../../common/services/gym-access.service';
 import { MembersService } from '../members/members.service';
@@ -20,6 +21,7 @@ describe('EnquiriesService', () => {
   let gymAccess: { assertCanManageGym: jest.Mock };
   let members: { create: jest.Mock };
   let saas: { assertLeads: jest.Mock };
+  let events: { emit: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -41,12 +43,16 @@ describe('EnquiriesService', () => {
     saas = {
       assertLeads: jest.fn(),
     };
+    events = {
+      emit: jest.fn(),
+    };
 
     service = new EnquiriesService(
       prisma as unknown as PrismaService,
       gymAccess as unknown as GymAccessService,
       members as unknown as MembersService,
       saas as unknown as SaasEntitlementsService,
+      events as unknown as EventEmitter2,
     );
   });
 
@@ -201,6 +207,62 @@ describe('EnquiriesService', () => {
         fullName: 'John Doe',
         gender: 'Male',
         address: 'Rajkot',
+        avatarUrl: '/uploads/john.png',
+      }),
+    );
+    expect(prisma.enquiry.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          photoUrl: '/uploads/john.png',
+        }),
+      }),
+    );
+  });
+
+  it('convert uses photoUrlOverride for member avatar and enquiry photo', async () => {
+    prisma.enquiry.findFirst.mockResolvedValue({
+      id: 'enq-1',
+      gymId: 'gym-1',
+      name: 'John Doe',
+      firstName: 'John',
+      lastName: 'Doe',
+      phone: '9876543210',
+      email: null,
+      photoUrl: '/uploads/old.png',
+      gender: null,
+      address: null,
+      message: null,
+      source: null,
+      medium: null,
+      interestedIn: null,
+      notes: null,
+      assignedToUserId: null,
+      enquiryDate: null,
+      followUpAt: null,
+      status: EnquiryStatus.OPEN,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      convertedAt: null,
+      convertedGymUserId: null,
+    });
+    members.create.mockResolvedValue({ gymUserId: 'member-1' });
+    prisma.enquiry.update.mockResolvedValue({});
+
+    await service.convert('actor-1', 'gym-1', 'enq-1', {
+      photoUrlOverride: '/uploads/new.png',
+    });
+
+    expect(members.create).toHaveBeenCalledWith(
+      'actor-1',
+      expect.objectContaining({
+        avatarUrl: '/uploads/new.png',
+      }),
+    );
+    expect(prisma.enquiry.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          photoUrl: '/uploads/new.png',
+        }),
       }),
     );
   });

@@ -1,6 +1,8 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { DietFoodUnitType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
+  IsEnum,
   IsInt,
   IsNumber,
   IsOptional,
@@ -29,6 +31,35 @@ export class UpdateDietFoodDto {
   @IsInt()
   @Min(0)
   calories?: number;
+
+  @ApiPropertyOptional({ description: 'Protein (grams)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  protein?: number;
+
+  @ApiPropertyOptional({ description: 'Carbohydrates (grams)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  carbs?: number;
+
+  @ApiPropertyOptional({ description: 'Fat (grams)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  fat?: number;
+
+  @ApiPropertyOptional({
+    enum: DietFoodUnitType,
+    description: 'Serving unit: KG, LITER, or GRAM',
+  })
+  @IsOptional()
+  @IsEnum(DietFoodUnitType)
+  unit_type?: DietFoodUnitType;
 
   @ApiPropertyOptional()
   @IsOptional()

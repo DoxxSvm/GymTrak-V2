@@ -1,8 +1,20 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
-import { AppOnboardingRole, GlobalRole, GymRole, Prisma } from '@prisma/client';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  AppOnboardingRole,
+  GlobalRole,
+  GymRole,
+  Prisma,
+} from '@prisma/client';
 import { randomBytes } from 'crypto';
+import type { JwtUser } from '../auth/types/jwt-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateGymDto } from './dto/create-gym.dto';
+import type { UpdateGymDto } from './dto/update-gym.dto';
 
 export type ListedGym = {
   id: string;
@@ -113,6 +125,12 @@ export class GymsService {
         },
       });
 
+      await tx.ownerProfile.upsert({
+        where: { userId },
+        create: { userId },
+        update: {},
+      });
+
       const shouldCompleteOwnerOnboarding =
         !user.onboardingCompletedAt &&
         user.selectedOnboardingRole === AppOnboardingRole.OWNER;
@@ -133,6 +151,88 @@ export class GymsService {
       slug: gym.slug,
       status: gym.status,
     };
+  }
+
+  async update(user: JwtUser, gymId: string, dto: UpdateGymDto) {
+    const gymRow = await this.prisma.gym.findUnique({
+      where: { id: gymId },
+    });
+    if (!gymRow) {
+      throw new NotFoundException('Gym not found');
+    }
+    this.assertUserCanManageGym(user, gymRow);
+
+    const patchKeys = Object.keys(dto).filter(
+      (k) => (dto as Record<string, unknown>)[k] !== undefined,
+    );
+    if (patchKeys.length === 0) {
+      throw new BadRequestException('No fields to update');
+    }
+
+    let name = gymRow.name;
+    let slug = gymRow.slug;
+    if (dto.name !== undefined) {
+      name = dto.name.trim();
+      slug = await this.uniqueGymSlug(slugify(name), gymId);
+    }
+
+    const updated = await this.prisma.gym.update({
+      where: { id: gymId },
+      data: {
+        ...(dto.name !== undefined && { name, slug }),
+        ...(dto.address !== undefined && {
+          address: dto.address?.trim() || null,
+        }),
+        ...(dto.latitude !== undefined && {
+          latitude:
+            dto.latitude == null ? null : new Prisma.Decimal(dto.latitude),
+        }),
+        ...(dto.longitude !== undefined && {
+          longitude:
+            dto.longitude == null ? null : new Prisma.Decimal(dto.longitude),
+        }),
+        ...(dto.gstin !== undefined && {
+          gstin: dto.gstin?.trim()
+            ? dto.gstin.trim().toUpperCase()
+            : null,
+        }),
+        ...(dto.logoUrl !== undefined && {
+          logoUrl: dto.logoUrl?.trim() || null,
+        }),
+      },
+    });
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      slug: updated.slug,
+      status: updated.status,
+    };
+  }
+
+  async remove(user: JwtUser, gymId: string) {
+    const gymRow = await this.prisma.gym.findUnique({
+      where: { id: gymId },
+    });
+    if (!gymRow) {
+      throw new NotFoundException('Gym not found');
+    }
+    this.assertUserCanManageGym(user, gymRow);
+    await this.prisma.gym.delete({ where: { id: gymId } });
+    return { success: true as const };
+  }
+
+  private assertUserCanManageGym(
+    user: JwtUser,
+    gym: { ownerId: string },
+  ): void {
+    if (user.globalRole === GlobalRole.SUPER_ADMIN) {
+      return;
+    }
+    if (gym.ownerId === user.sub) {
+      return;
+    }
+    throw new ForbiddenException('Only the gym owner can modify this gym');
   }
 
   private async assertCanCreateOwnedGym(userId: string): Promise<void> {
@@ -160,13 +260,16 @@ export class GymsService {
     throw new ForbiddenException('Only gym owners can create gyms');
   }
 
-  private async uniqueGymSlug(base: string): Promise<string> {
+  private async uniqueGymSlug(
+    base: string,
+    excludeGymId?: string,
+  ): Promise<string> {
     let candidate = base;
     for (let i = 0; i < 8; i++) {
       const existing = await this.prisma.gym.findUnique({
         where: { slug: candidate },
       });
-      if (!existing) {
+      if (!existing || existing.id === excludeGymId) {
         return candidate;
       }
       const suffix = randomBytes(3).toString('hex');

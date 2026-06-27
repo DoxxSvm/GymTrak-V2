@@ -1,3 +1,33 @@
+import { GymRole } from '@prisma/client';
+
+/** List/detail bucket: staff roles → `trainer`, `MEMBER` → `member`. */
+export function workoutCreatedByBucket(
+  role: string,
+): 'trainer' | 'member' {
+  return role === GymRole.MEMBER ? 'member' : 'trainer';
+}
+
+/** Human-readable creator label when `fullName` is unavailable. */
+export function workoutCreatorDisplayName(
+  fullName: string | null | undefined,
+  role: string,
+): string {
+  const trimmed = fullName?.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+  switch (role) {
+    case GymRole.OWNER:
+      return 'Gym Owner';
+    case GymRole.TRAINER:
+      return 'Trainer';
+    case GymRole.STAFF:
+      return 'Staff';
+    default:
+      return 'Member';
+  }
+}
+
 /**
  * Static labels/icons for exercise enums — GET /meta/all (single source for app forms).
  * Stored values in DB are the `value` fields only.
@@ -11,7 +41,11 @@ export const WORKOUT_META_ALL = {
     { label: 'Machine', value: 'MACHINE', icon: 'machine.png' },
     { label: 'Plate', value: 'PLATE', icon: 'plate.png' },
     { label: 'Resistance Band', value: 'RESISTANCE_BAND', icon: 'band.png' },
-    { label: 'Suspension Band', value: 'SUSPENSION_BAND', icon: 'suspension.png' },
+    {
+      label: 'Suspension Band',
+      value: 'SUSPENSION_BAND',
+      icon: 'suspension.png',
+    },
     { label: 'Other', value: 'OTHER', icon: 'other.png' },
   ],
   muscles: [

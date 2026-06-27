@@ -9,6 +9,8 @@ import {
   Put,
   Query,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { GymIdQueryDto } from '../../common/dto/gym-id-query.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -27,13 +29,20 @@ import { TrainerPermissionsDto } from './dto/trainer-permissions.dto';
 import { CreateTrainerCompatDto } from './dto/create-trainer-compat.dto';
 import { PayTrainerSalaryMobileDto } from './dto/pay-trainer-salary-mobile.dto';
 import { TrainersService } from './trainers.service';
+import { GymRole } from '@prisma/client';
+
+const CREATE_TRAINER_COMPAT_PIPE = new ValidationPipe({
+  transform: true,
+  whitelist: true,
+  forbidNonWhitelisted: false,
+});
 
 /**
  * `trainerId` path param is the trainer's `GymUser.id` (role TRAINER).
  */
 @Controller('trainers')
 export class TrainersController {
-  constructor(private readonly trainers: TrainersService) {}
+  constructor(private readonly trainers: TrainersService) { }
 
   /** Logged-in staff: coarse RBAC flags (prefer `GET /rbac/effective` for full matrix). */
   @Get('me/permissions')
@@ -42,13 +51,13 @@ export class TrainersController {
   }
 
   @Get()
-  @UseGuards(PermissionsGuard)
   list(@CurrentUser() user: JwtUser, @Query() query: TrainerListQueryDto) {
     const limit = query.limit ?? 20;
     const offset = query.offset ?? 0;
     return this.trainers.list(
       user.sub,
       query.gymId,
+      query.role,
       query.q,
       query.includeInactive,
       limit,
@@ -56,28 +65,32 @@ export class TrainersController {
     );
   }
 
-  @Post()
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
-  create(@CurrentUser() user: JwtUser, @Body() body: CreateTrainerDto) {
-    return this.trainers.create(user.sub, body);
-  }
+  // @Post()
+  // create(@CurrentUser() user: JwtUser, @Body() body: CreateTrainerDto) {
+  //   return this.trainers.create(user.sub, body);
+  // }
 
   @Post('compat')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
+  @UsePipes(CREATE_TRAINER_COMPAT_PIPE)
   createCompat(
     @CurrentUser() user: JwtUser,
     @Body() body: CreateTrainerCompatDto,
   ) {
     const shifts =
-      body.shift?.days?.map((d) => ({
-        dayOfWeek: this.dayToInt(d),
-        startTime: body.shift!.start_time,
-        endTime: body.shift!.end_time,
-      })) ?? [];
+      body.shifts && body.shifts.length > 0
+        ? body.shifts.map((s) => ({
+          dayOfWeek: s.dayOfWeek,
+          startTime: s.startTime,
+          endTime: s.endTime,
+        }))
+        : (body.shift?.days?.map((d) => ({
+          dayOfWeek: this.dayToInt(d),
+          startTime: body.shift!.start_time,
+          endTime: body.shift!.end_time,
+        })) ?? []);
     return this.trainers.create(user.sub, {
       gymId: body.gymId,
+      role: body.role ?? GymRole.TRAINER,
       phone: body.phone,
       fullName: body.full_name,
       avatarUrl: body.profile_image,
@@ -90,22 +103,7 @@ export class TrainersController {
       salaryPeriod: this.mapSalaryType(body.salary_type),
       notes: undefined,
       shifts,
-      permissions: {
-        members: !!(
-          body.permissions?.add_members ||
-          body.permissions?.add_clients ||
-          body.permissions?.view_member_details
-        ),
-        dashboard: !!(
-          body.permissions?.view_dashboard || body.permissions?.show_dashboard
-        ),
-        payments: !!(
-          body.permissions?.view_payments ||
-          body.permissions?.show_payments ||
-          body.permissions?.show_payment_in_details
-        ),
-        admin: !!body.permissions?.add_trainer,
-      },
+      permissions: body.permissions as string[],
       generateLoginCredentials:
         !!body.credentials &&
         !body.credentials.trainer_id &&
@@ -116,8 +114,6 @@ export class TrainersController {
   }
 
   @Get(':trainerId/plans')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   getPlansTab(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -127,8 +123,6 @@ export class TrainersController {
   }
 
   @Get(':trainerId/clients')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   getClients(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -138,8 +132,6 @@ export class TrainersController {
   }
 
   @Get(':trainerId/revenue')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   getRevenue(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -149,8 +141,6 @@ export class TrainersController {
   }
 
   @Get(':trainerId/salary')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   getSalaryMobile(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -164,8 +154,6 @@ export class TrainersController {
   }
 
   @Post(':trainerId/salary/pay')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   paySalaryMobile(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -181,8 +169,6 @@ export class TrainersController {
   }
 
   @Get(':trainerId/attendance')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   getAttendanceTab(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -200,8 +186,6 @@ export class TrainersController {
   }
 
   @Get(':trainerId/salary-payments')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   getSalaryPaymentsTab(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -228,8 +212,6 @@ export class TrainersController {
   }
 
   @Post(':trainerId/salary-payments')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   recordSalaryPayment(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -246,8 +228,6 @@ export class TrainersController {
 
   /** Issue or rotate staff login (username + password) for `POST /auth/staff/login`. */
   @Post(':trainerId/credentials')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   generateCredentials(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -261,8 +241,6 @@ export class TrainersController {
   }
 
   @Patch(':trainerId')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   update(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -280,12 +258,10 @@ export class TrainersController {
     @Param('trainerId') trainerId: string,
     @Query() query: GymIdQueryDto,
   ) {
-    return this.trainers.getBasic(user.sub, query.gymId, trainerId);
+    return this.trainers.getBasic(user.sub, query.gymId, trainerId, query.role);
   }
 
   @Get(':trainerId/members')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   members(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -295,8 +271,6 @@ export class TrainersController {
   }
 
   @Put(':trainerId')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   replace(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -307,8 +281,6 @@ export class TrainersController {
   }
 
   @Delete(':trainerId')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   remove(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -318,8 +290,6 @@ export class TrainersController {
   }
 
   @Put(':trainerId/password')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   changePassword(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -335,8 +305,6 @@ export class TrainersController {
   }
 
   @Put(':trainerId/permissions')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   updatePermissions(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -353,8 +321,6 @@ export class TrainersController {
 
   /** Dynamic trainer permission update (industry shape). */
   @Patch(':trainerId/permissions')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.ADMIN)
   updatePermissionsDynamic(
     @CurrentUser() user: JwtUser,
     @Param('trainerId') trainerId: string,
@@ -369,8 +335,19 @@ export class TrainersController {
     );
   }
 
-  private dayToInt(d: string): number {
-    switch (d.toLowerCase()) {
+  /**
+   * Compat: string day name or Monday-indexed int (0=Mon..6=Sun) → DB int (0=Sun..6=Sat).
+   */
+  private dayToInt(d: string | number): number {
+    if (typeof d === 'number') {
+      return (d + 1) % 7;
+    }
+    const s = String(d).trim();
+    if (/^\d+$/.test(s)) {
+      const n = parseInt(s, 10);
+      return (n + 1) % 7;
+    }
+    switch (s.toLowerCase()) {
       case 'sun':
       case 'sunday':
         return 0;

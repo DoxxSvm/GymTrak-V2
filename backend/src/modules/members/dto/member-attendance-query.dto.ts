@@ -24,6 +24,11 @@ export class MemberAttendanceSummaryQueryDto {
   @IsString()
   year?: string;
 
+  /** IANA timezone for display formatting (e.g. "Asia/Kolkata"). Falls back to gym timezone. */
+  @IsOptional()
+  @IsString()
+  timezone?: string;
+
   /** Max rows in `months_overview` (default 24). */
   @IsOptional()
   @Type(() => Number)
@@ -56,6 +61,11 @@ export class MemberAttendanceHistoryQueryDto {
   @IsString()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   to?: string;
+
+  /** IANA timezone for display formatting (e.g. "Asia/Kolkata"). Falls back to gym timezone. */
+  @IsOptional()
+  @IsString()
+  timezone?: string;
 
   @IsOptional()
   @Type(() => Number)

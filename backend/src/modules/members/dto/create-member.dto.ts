@@ -7,10 +7,12 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -135,8 +137,16 @@ export class CreateMemberDto {
   address?: string;
 
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'string' && value.trim() === '') return undefined;
+    return typeof value === 'string' ? value.replace(/\D/g, '') : value;
+  })
+  @ValidateIf((_, v) => v !== undefined && v !== null && v !== '')
   @IsString()
-  @MaxLength(32)
+  @Matches(/^\d{12}$/, {
+    message: 'aadhaar_number must be exactly 12 digits when provided',
+  })
   aadhaar_number?: string;
 
   @IsOptional()

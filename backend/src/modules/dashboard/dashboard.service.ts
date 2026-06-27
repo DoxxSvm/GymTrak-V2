@@ -4,11 +4,17 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { EnquiryStatus, GymRole, PaymentStatus, Prisma } from '@prisma/client';
 import {
-  PermissionEngineService,
-} from '../rbac/permission-engine.service';
+  EnquiryStatus,
+  GymRole,
+  MemberSubscriptionStatus,
+  PaymentStatus,
+  Prisma,
+} from '@prisma/client';
+import { PermissionEngineService } from '../rbac/permission-engine.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { getTrainerPermissions } from 'src/common/permissions/permission-codes';
+import { balanceDueCents } from '../subscriptions/subscription-lifecycle';
 
 @Injectable()
 export class DashboardService {
@@ -17,13 +23,9 @@ export class DashboardService {
     private readonly permissionEngine: PermissionEngineService,
   ) {}
 
-  async getOwnerDashboard(
-    ownerId: string,
-    gymId?: string,
-  ): Promise<unknown> {
-    const isSuperAdmin = await this.permissionEngine.isPlatformSuperAdmin(
-      ownerId,
-    );
+  async getOwnerDashboard(ownerId: string, gymId?: string): Promise<unknown> {
+    const isSuperAdmin =
+      await this.permissionEngine.isPlatformSuperAdmin(ownerId);
     const gyms = await this.prisma.gym.findMany({
       where: { ownerId },
       select: { id: true, name: true, slug: true, timezone: true },
@@ -62,7 +64,7 @@ export class DashboardService {
     const gid = selected.id;
 
     const metrics = await this.loadDashboardMetrics(gid, ownerId, true);
-    const permissions = await this.buildOwnerPermissionsPayload(ownerId, gid);
+    const permissions = await getTrainerPermissions(this.prisma, ownerId, gid);
 
     return {
       viewer: 'owner' as const,
@@ -119,11 +121,9 @@ export class DashboardService {
         where: {
           gymId: selectedGym.id,
           role: GymRole.MEMBER,
+          isLead: false,
           isActive: true,
-          OR: [
-            { membershipEndsAt: null },
-            { membershipEndsAt: { gte: start } },
-          ],
+          membershipEndsAt: { not: null, gte: start },
         },
       }),
       this.prisma.gymUser.count({
@@ -137,8 +137,12 @@ export class DashboardService {
         where: {
           gymId: selectedGym.id,
           role: GymRole.MEMBER,
+          isLead: false,
           isActive: true,
-          membershipEndsAt: { not: null, lt: start },
+          OR: [
+            { membershipEndsAt: null },
+            { membershipEndsAt: { lt: start } },
+          ],
         },
       }),
       this.prisma.gymUser.count({
@@ -152,10 +156,7 @@ export class DashboardService {
         },
         _sum: { amountCents: true },
       }),
-      this.prisma.payment.aggregate({
-        where: { gymId: selectedGym.id, status: PaymentStatus.PENDING },
-        _sum: { amountCents: true },
-      }),
+      this.computePendingCollectionCents(selectedGym.id),
       this.prisma.payment.findMany({
         where: { gymId: selectedGym.id },
         orderBy: { createdAt: 'desc' },
@@ -210,6 +211,8 @@ export class DashboardService {
       return { day: labels[d.getUTCDay()], count: attendanceMap.get(key) ?? 0 };
     });
 
+    const trafficTrend = await this.buildTrafficTrend(selectedGym.id, active);
+
     return {
       greeting: this.getGreeting(now),
       viewer: 'owner' as const,
@@ -228,15 +231,16 @@ export class DashboardService {
         total_members: totalMembers,
       },
       revenue: {
-        monthly: Math.round((monthlyRevenue._sum.amountCents ?? 0) / 100),
-        pending: Math.round((pendingRevenue._sum.amountCents ?? 0) / 100),
+        monthly: monthlyRevenue._sum.amountCents ?? 0,
+        pending: pendingRevenue,
       },
       recent_payments: recentPayments.map((p) => ({
         member_name: p.memberUser?.fullName ?? '',
-        amount: Math.round(p.amountCents / 100),
+        amount: p.amountCents,
         date: p.createdAt,
       })),
       weekly_attendance,
+      traffic_trend: trafficTrend,
     };
   }
 
@@ -275,6 +279,12 @@ export class DashboardService {
         ...metrics,
       };
     }
+    const trainerPermissions = await getTrainerPermissions(
+      this.prisma,
+      userId,
+      gymId,
+    );
+
     const eff = await this.permissionEngine.getEffective(userId, gymId);
     const metrics = await this.loadDashboardMetrics(
       gym.id,
@@ -290,9 +300,7 @@ export class DashboardService {
         slug: gym.slug,
         timezone: gym.timezone,
       },
-      effectivePermissions: this.permissionEngine.expandEffectivePermissions(
-        eff.effective,
-      ),
+      permissions: trainerPermissions,
       ...metrics,
     };
   }
@@ -341,7 +349,7 @@ export class DashboardService {
 
     const [
       receivedAgg,
-      pendingAgg,
+      pendingCollectionCents,
       recentPayments,
       attendanceToday,
       totalMembers,
@@ -373,14 +381,8 @@ export class DashboardService {
           })
         : Promise.resolve({ _sum: { amountCents: null as number | null } }),
       includePayments
-        ? this.prisma.payment.aggregate({
-            where: {
-              gymId,
-              status: PaymentStatus.PENDING,
-            },
-            _sum: { amountCents: true },
-          })
-        : Promise.resolve({ _sum: { amountCents: null as number | null } }),
+        ? this.computePendingCollectionCents(gymId)
+        : Promise.resolve(0),
       includePayments
         ? this.prisma.payment.findMany({
             where: { gymId },
@@ -410,11 +412,9 @@ export class DashboardService {
       this.prisma.gymUser.count({
         where: {
           ...memberWhere,
+          isLead: false,
           isActive: true,
-          OR: [
-            { membershipEndsAt: null },
-            { membershipEndsAt: { gte: startOfToday } },
-          ],
+          membershipEndsAt: { not: null, gte: startOfToday },
         },
       }),
       this.prisma.gymUser.count({
@@ -426,13 +426,18 @@ export class DashboardService {
       this.prisma.gymUser.count({
         where: {
           ...memberWhere,
+          isLead: false,
           isActive: true,
-          membershipEndsAt: { not: null, lt: startOfToday },
+          OR: [
+            { membershipEndsAt: null },
+            { membershipEndsAt: { lt: startOfToday } },
+          ],
         },
       }),
       this.prisma.gymUser.count({
         where: {
           ...memberWhere,
+          isLead: false,
           isActive: true,
           membershipEndsAt: {
             gte: day1,
@@ -443,6 +448,7 @@ export class DashboardService {
       this.prisma.gymUser.count({
         where: {
           ...memberWhere,
+          isLead: false,
           isActive: true,
           membershipEndsAt: {
             gte: day4,
@@ -470,7 +476,7 @@ export class DashboardService {
     ]);
 
     const received30 = receivedAgg._sum.amountCents ?? 0;
-    const pending = pendingAgg._sum.amountCents ?? 0;
+    const pending = pendingCollectionCents;
 
     const paymentHealth = !includePayments
       ? 50
@@ -497,6 +503,8 @@ export class DashboardService {
       0.45 * paymentHealth + 0.3 * attendanceHealth + 0.25 * expiryHealth,
     );
 
+    const trafficTrend = await this.buildTrafficTrend(gymId, activeMembers);
+
     return {
       owner_name: gymWithOwner?.owner?.fullName ?? '',
       owner_image: gymWithOwner?.owner?.avatarUrl ?? null,
@@ -515,7 +523,7 @@ export class DashboardService {
         ? {
             receivedLast30DaysCents: received30,
             pendingCents: pending,
-            currency: 'USD',
+            currency: 'INR',
             recent: recentPayments,
           }
         : {
@@ -526,6 +534,7 @@ export class DashboardService {
         todayCount: attendanceToday,
         date: startOfToday.toISOString(),
       },
+      traffic_trend: trafficTrend,
       members: {
         total: totalMembers,
         active: activeMembers,
@@ -546,6 +555,144 @@ export class DashboardService {
         unreadCount: unreadNotifications,
       },
     };
+  }
+
+  /**
+   * Total still to collect: outstanding per current member subscriptions
+   * (`priceCents - paidCents`, same as subscription list `balanceDueCents`) plus any
+   * `Payment` rows still in `PENDING` (recorded but not completed).
+   */
+  private async computePendingCollectionCents(gymId: string): Promise<number> {
+    const [currentSubs, pendingPayments] = await Promise.all([
+      this.prisma.memberSubscription.findMany({
+        where: {
+          isCurrentSubscription: true,
+          status: {
+            in: [
+              MemberSubscriptionStatus.ACTIVE,
+              MemberSubscriptionStatus.SCHEDULED,
+              MemberSubscriptionStatus.FROZEN,
+            ],
+          },
+          gymUser: {
+            gymId,
+            role: GymRole.MEMBER,
+            isActive: true,
+          },
+        },
+        select: { priceCents: true, paidCents: true },
+      }),
+      this.prisma.payment.aggregate({
+        where: { gymId, status: PaymentStatus.PENDING },
+        _sum: { amountCents: true },
+      }),
+    ]);
+
+    let total = pendingPayments._sum.amountCents ?? 0;
+    for (const s of currentSubs) {
+      total += balanceDueCents(s.priceCents, s.paidCents);
+    }
+    return total;
+  }
+
+  /** Get local hour for a Date in a given IANA timezone. */
+  private getLocalHour(date: Date, tz: string): number {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour: 'numeric',
+      hour12: false,
+    }).formatToParts(date);
+    const hourPart = parts.find((p) => p.type === 'hour');
+    return hourPart ? parseInt(hourPart.value, 10) : date.getUTCHours();
+  }
+
+  /**
+   * Traffic trend from member `AttendanceRecord`: current week (Mon–Sun),
+   * unique members per day, check-in counts per 3-hour slot (gym timezone).
+   */
+  private async buildTrafficTrend(gymId: string, activeMembers: number) {
+    const gym = await this.prisma.gym.findUnique({
+      where: { id: gymId },
+      select: { timezone: true },
+    });
+    const tz = gym?.timezone?.trim() || 'Asia/Kolkata';
+
+    const now = new Date();
+    const todayAttendedOn = this.utcDateOnly(now);
+    const dayOfWeek = todayAttendedOn.getUTCDay();
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const weekStart = new Date(todayAttendedOn);
+    weekStart.setUTCDate(weekStart.getUTCDate() + mondayOffset);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+
+    const weekRecords = await this.prisma.attendanceRecord.findMany({
+      where: {
+        gymId,
+        attendedOn: { gte: weekStart, lte: weekEnd },
+      },
+      select: {
+        attendedOn: true,
+        memberUserId: true,
+        checkedInAt: true,
+      },
+    });
+
+    const dateKey = (d: Date) => d.toISOString().slice(0, 10);
+    const todayKey = dateKey(todayAttendedOn);
+
+    const membersByDay = new Map<string, Set<string>>();
+    for (const r of weekRecords) {
+      const key = dateKey(r.attendedOn);
+      if (!membersByDay.has(key)) {
+        membersByDay.set(key, new Set());
+      }
+      membersByDay.get(key)!.add(r.memberUserId);
+    }
+
+    const todayMembers = membersByDay.get(todayKey);
+
+    const slots = [
+      { label: '6 AM to 9 AM', startHour: 6, endHour: 9 },
+      { label: '9 AM to 12 PM', startHour: 9, endHour: 12 },
+      { label: '12 PM to 3 PM', startHour: 12, endHour: 15 },
+      { label: '3 PM to 6 PM', startHour: 15, endHour: 18 },
+      { label: '6 PM to 9 PM', startHour: 18, endHour: 21 },
+      { label: '9 PM to 12 AM', startHour: 21, endHour: 24 },
+    ];
+
+    const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const todayIndex = (dayOfWeek + 6) % 7;
+    const todayLabel = dayLabels[todayIndex];
+
+    const weekly = dayLabels.map((label, i) => {
+      const d = new Date(weekStart);
+      d.setUTCDate(d.getUTCDate() + i);
+      const key = dateKey(d);
+      const dayRecords = weekRecords.filter((r) => dateKey(r.attendedOn) === key);
+      const count = membersByDay.get(key)?.size ?? 0;
+      const hourly = slots.map((slot) => {
+        const slotCount = dayRecords.filter((r) => {
+          const h = this.getLocalHour(r.checkedInAt, tz);
+          return h >= slot.startHour && h < slot.endHour;
+        }).length;
+        return { label: slot.label, count: slotCount };
+      });
+      return { day: label, count, hourly };
+    });
+
+    return {
+      today_count: todayMembers?.size ?? 0,
+      capacity: activeMembers,
+      selected_day: todayLabel,
+      weekly,
+    };
+  }
+
+  private utcDateOnly(d: Date): Date {
+    return new Date(
+      Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0),
+    );
   }
 
   private getGreeting(now: Date): string {
@@ -569,11 +716,12 @@ export class DashboardService {
       this.permissionEngine.getRoleDefaults(GymRole.STAFF),
     ]);
 
+    const expandedPermissions =
+      this.permissionEngine.expandEffectivePermissions(effective.effective);
     return {
       role: effective.role,
-      effective: this.permissionEngine.expandEffectivePermissions(
-        effective.effective,
-      ),
+      permissions: expandedPermissions,
+      effective: expandedPermissions,
       roleDefaults: {
         trainer: trainerDefaults,
         staff: staffDefaults,

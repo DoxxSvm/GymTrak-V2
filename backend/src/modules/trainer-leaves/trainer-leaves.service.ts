@@ -38,7 +38,11 @@ function inclusiveUtcDayCount(start: Date, end: Date): number {
     start.getUTCMonth(),
     start.getUTCDate(),
   );
-  const ed = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+  const ed = Date.UTC(
+    end.getUTCFullYear(),
+    end.getUTCMonth(),
+    end.getUTCDate(),
+  );
   return Math.floor((ed - sd) / 86400000) + 1;
 }
 
@@ -57,7 +61,7 @@ export class TrainerLeavesService {
     private readonly gymAccess: GymAccessService,
     private readonly perm: PermissionEngineService,
     private readonly config: ConfigService,
-  ) { }
+  ) {}
 
   private annualAllowanceDays(): number {
     const raw = this.config.get<string>('TRAINER_ANNUAL_LEAVE_DAYS');
@@ -72,11 +76,6 @@ export class TrainerLeavesService {
   }
 
   async create(actorUserId: string, dto: CreateTrainerLeaveDto) {
-    // await this.perm.assertOwnerOrPermission(
-    //   actorUserId,
-    //   dto.gymId,
-    //   PERMISSION_CODES.LEAVE_CREATE,
-    // );
 
     const viewAll = await this.perm.canViewAllLeaves(actorUserId, dto.gymId);
     let trainerGymUserId: string;
@@ -106,11 +105,7 @@ export class TrainerLeavesService {
         dto.gymId,
       );
       const tid = dto.trainerId?.trim();
-      if (
-        tid &&
-        tid !== gymUserId &&
-        tid !== actorUserId
-      ) {
+      if (tid && tid !== gymUserId && tid !== actorUserId) {
         throw new ForbiddenException('You can only create leave for yourself');
       }
       trainerGymUserId = gymUserId;
@@ -166,7 +161,7 @@ export class TrainerLeavesService {
     //     gymId,
     //   );
     //   where.trainerGymUserId = gymUserId;
-    // } else 
+    // } else
 
     if (query.trainerId?.trim()) {
       where.trainerGymUserId = query.trainerId.trim();
@@ -550,7 +545,10 @@ export class TrainerLeavesService {
     row: Prisma.TrainerLeaveGetPayload<{
       include: {
         trainerGymUser: {
-          select: { id: true; user: { select: { fullName: true; phone: true } } };
+          select: {
+            id: true;
+            user: { select: { fullName: true; phone: true } };
+          };
         };
       };
     }>,

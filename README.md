@@ -44,6 +44,16 @@ in your IDE’s toolbar or open the [/iosApp](./iosApp) directory in Xcode and r
 1. Copy `iosApp/iosApp/GoogleService-Info.plist.example` to `iosApp/iosApp/GoogleService-Info.plist` from the Firebase console.
 2. Run `pod install` in `iosApp/` if needed.
 
+### Build and Run Backend API
+
+On the `backend` branch:
+
+1. Copy `backend/.env.example` to `backend/.env` and set secrets locally.
+2. Copy `backend/secrets/firebase-adminsdk.json.example` to `backend/secrets/firebase-adminsdk.json` if using FCM.
+3. From `backend/`: `npm install`, `npx prisma generate`, `npm run start:dev`.
+
+Never commit `backend/.env`, Firebase service account JSON, or files under `backend/uploads/`.
+
 ---
 
 Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)…

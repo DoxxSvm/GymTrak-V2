@@ -57,6 +57,14 @@ enum SubscriptionStatus {
 enum AppOnboardingRole {
   OWNER
   MEMBER
+  TRAINER
+  STAFF
+}
+
+/// Gym owner's consumer-app persona (same user, same mobile; optional member profile).
+enum LastActiveRole {
+  OWNER
+  MEMBER
 }
 
 enum PaymentStatus {
@@ -310,14 +318,34 @@ model User {
   /// Member profile (metric); nullable until onboarding
   heightCm     Decimal?   @db.Decimal(5, 2)
   weightKg     Decimal?   @db.Decimal(5, 2)
+  /// Optional consumer-app onboarding (years)
+  ageYears       Int?
+  address        String?
+  gender         String?    @db.VarChar(16)
+  activityLevel  String?    @db.VarChar(16)
+  fitnessGoal    String?    @db.VarChar(64)
+  /// Snapshot from `computeMemberWellness` (BMI, category, maintenance kcal).
+  wellness       Json?
+  /// Indian national ID (12 digits); optional. Prefer over legacy `Aadhaar:` lines in `GymUser.notes`.
+  aadhaarNumber  String?    @map("aadhaar_number") @db.VarChar(12)
+  /// FCM registration token for push (owner/member apps); cleared when invalid.
+  fcmDeviceToken String?    @db.Text
+  fcmTokenUpdatedAt DateTime?
+  /// For users who own a gym: last selected consumer persona after OTP login / profile switch.
+  lastActiveRole LastActiveRole @default(OWNER)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
+
+  ownerProfile    OwnerProfile?
+  memberProfile   MemberProfile?
 
   ownedGyms       Gym[]            @relation("GymOwner")
   gymMemberships  GymUser[]
   otpChallenges   OtpChallenge[]
   refreshTokens   RefreshToken[]
   paymentsAsMember Payment[]       @relation("MemberPayments")
+  /// Member-subscription `Payment` rows recorded by this user (staff/owner JWT `sub`).
+  paymentsRecorded Payment[]       @relation("PaymentRecordedBy")
   attendanceRecords AttendanceRecord[] @relation("MemberAttendance")
   biometricCredentials MemberBiometricCredential[]
   notificationsIn Notification[]  @relation("NotificationRecipient")
@@ -327,9 +355,46 @@ model User {
   expensesRecorded        Expense[]                 @relation("ExpenseRecordedBy")
   auditLogs               AuditLog[]                @relation("AuditActor")
   gymProductFavorites     GymProductFavorite[]
+  memberPersonalExercises     MemberPersonalExercise[]
+  memberPersonalWorkoutPlans  MemberPersonalWorkoutPlan[]
+  /// Gym catalog exercises (gym-scoped with ?gymId, or personal when gymId is null; userId = actor)
+  catalogExercises            Exercise[]
+  /// Logged gym or personal workouts (subject user on each row; see MemberWorkoutPlan)
+  memberWorkoutPlans          MemberWorkoutPlan[]
+  memberWorkoutPlansCreated   MemberWorkoutPlan[] @relation("MemberWorkoutPlanCreatedBy")
+  dietFoodConsumptions        DietFoodConsumption[]
+  broadcastChannelsCreated   BroadcastChannel[]  @relation("BroadcastChannelCreatedBy")
+  broadcastMessagesCreated   BroadcastMessage[]  @relation("BroadcastMessageCreatedBy")
+  subscriptionHistoryEvents  SubscriptionHistoryEvent[] @relation("SubscriptionHistoryActor")
 
   @@index([globalRole])
   @@index([createdAt])
+}
+
+/// Gym owner's app profile marker (1:1). Created when the user becomes an owner (first owned gym).
+model OwnerProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@map("owner_profiles")
+}
+
+/// Optional second persona for the same user (owner trains as member). Max one per user.
+model MemberProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  ageYears  Int
+  gender    String   @db.VarChar(16)
+  heightCm  Decimal  @db.Decimal(5, 2)
+  weightKg  Decimal  @db.Decimal(5, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("member_profiles")
 }
 
 model OtpChallenge {
@@ -341,6 +406,10 @@ model OtpChallenge {
   attempts   Int        @default(0)
   maxAttempts Int       @default(5)
   createdAt  DateTime   @default(now())
+  // MSG91 request_id / widget reqId when OTP_PROVIDER=msg91
+  externalReqId String?
+  // v5 | widget — MSG91 verification channel
+  externalChannel String?
 
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -414,6 +483,10 @@ model Gym {
   dietMeals        DietMeal[]
   gymProducts      GymProduct[]
   gymProductFavorites GymProductFavorite[]
+  memberWorkoutPlans MemberWorkoutPlan[]
+  dietFoodConsumptions DietFoodConsumption[]
+  broadcastChannels   BroadcastChannel[]
+  subscriptionHistoryEvents SubscriptionHistoryEvent[]
 
   @@index([ownerId])
   @@index([createdAt])
@@ -443,7 +516,7 @@ model GymSystemConfig {
   updatedAt DateTime @updatedAt
 }
 
-/// One row per user per gym — drives dashboards & authorization scope
+/// One row per user per gym **per role** (e.g. owner may also have a MEMBER row at the same gym).
 model GymUser {
   id        String   @id @default(cuid())
   userId    String
@@ -478,13 +551,15 @@ model GymUser {
   trainerLeaves           TrainerLeave[]
   attributedExpenses      Expense[]            @relation("ExpenseTrainerLink")
   dietMeals               DietMeal[]
+  memberWorkoutPlans      MemberWorkoutPlan[]
+  broadcastChannelMembers BroadcastChannelMember[]
 
   /// When true, member cannot check in (QR or biometric) until cleared by staff.
   attendanceBlocked       Boolean   @default(false)
   attendanceBlockedReason String?
   attendanceBlockedAt     DateTime?
 
-  @@unique([userId, gymId])
+  @@unique([userId, gymId, role])
   @@index([gymId, role])
   @@index([gymId, joinedAt])
   @@index([gymId, membershipEndsAt])
@@ -496,6 +571,9 @@ model GymUser {
 model Payment {
   id          String        @id @default(cuid())
   gymId       String
+  /// User who recorded the payment (JWT actor); legacy rows backfilled to gym `ownerId`.
+  userId      String
+  user        User          @relation("PaymentRecordedBy", fields: [userId], references: [id], onDelete: Restrict)
   gym         Gym           @relation(fields: [gymId], references: [id], onDelete: Cascade)
   amountCents Int
   currency    String        @default("USD")
@@ -535,7 +613,7 @@ model AttendanceRecord {
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
 
-  @@unique([gymId, memberUserId, attendedOn])
+  @@index([gymId, memberUserId, attendedOn])
   @@index([gymId, attendedOn])
   @@index([memberUserId, gymId])
 }
@@ -734,7 +812,8 @@ model GymPlanShift {
   @@index([planId])
 }
 
-/// A member's purchased plan period at a gym (links to catalog SubscriptionPlan)
+/// A member's purchased plan period at a gym (links to catalog SubscriptionPlan).
+/// Same member may have many rows (e.g. each `POST /payments` creates a new period for that plan).
 model MemberSubscription {
   id        String                  @id @default(cuid())
   gymUserId String
@@ -748,6 +827,8 @@ model MemberSubscription {
   status    MemberSubscriptionStatus @default(ACTIVE)
   startsAt  DateTime
   endsAt    DateTime
+  /// True for the single in-window period with the latest `endsAt` (recomputed on writes / sync).
+  isCurrentSubscription Boolean @default(false)
   /// Amount due for this subscription period (snapshot; may differ from catalog if prorated)
   priceCents Int                    @default(0)
   /// Sum applied from completed payments toward this subscription
@@ -761,10 +842,30 @@ model MemberSubscription {
 
   payments Payment[]
   invoices Invoice[]
+  historyEvents SubscriptionHistoryEvent[]
 
   @@index([gymUserId, startsAt])
   @@index([gymUserId, endsAt])
   @@index([gymPlanId])
+}
+
+/// Audit trail for subscription lifecycle actions (freeze, extend, renew, cancel).
+model SubscriptionHistoryEvent {
+  id             String             @id @default(cuid())
+  subscriptionId String             @map("subscription_id")
+  subscription   MemberSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  gymId          String             @map("gym_id")
+  gym            Gym                @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  eventType      String             @map("event_type")
+  actorUserId    String?            @map("actor_user_id")
+  actor          User?              @relation("SubscriptionHistoryActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  payloadJson    Json               @default("{}") @map("payload_json")
+  createdAt      DateTime           @default(now()) @map("created_at")
+
+  @@index([subscriptionId])
+  @@index([gymId])
+  @@index([createdAt])
+  @@map("subscription_history_events")
 }
 
 /// Monotonic invoice numbers per gym per UTC calendar year
@@ -887,6 +988,7 @@ model TrainerProfile {
   gymUserId        String        @id
   gymUser          GymUser       @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
   salaryCents      Int?
+  trainerPermission String[] 
   salaryPeriod     SalaryPeriod?
   contractStartsAt DateTime?     @db.Date
   contractEndsAt   DateTime?     @db.Date
@@ -930,7 +1032,7 @@ model TrainerAttendanceRecord {
   checkedInAt   DateTime @default(now())
   checkedOutAt  DateTime?
 
-  @@unique([gymId, trainerUserId, attendedOn])
+  @@index([gymId, trainerUserId, attendedOn])
   @@index([gymId, attendedOn])
 }
 
@@ -1032,11 +1134,13 @@ model GymProductFavorite {
   @@map("gym_product_favorites")
 }
 
-/// Per-gym exercise catalog (trainers build programs from these rows)
+/// Per-gym or personal exercise catalog: with ?gymId use gymId + userId; without, gymId null and userId = JWT sub
 model Exercise {
   id               String   @id @default(uuid())
-  gymId            String
-  gym              Gym      @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gymId            String?
+  gym              Gym?     @relation(fields: [gymId], references: [id], onDelete: Cascade)
   name             String
   assetUrl         String?
   equipment        ExerciseEquipment
@@ -1045,7 +1149,10 @@ model Exercise {
   isActive         Boolean  @default(true)
   createdAt        DateTime @default(now())
   secondaryMuscles ExerciseSecondaryMuscle[]
+  workoutPlanExercises WorkoutPlanExercise[]
 
+  @@index([userId])
+  @@index([gymId, userId])
   @@index([gymId, name])
   @@index([gymId, equipment])
   @@index([gymId, primaryMuscle])
@@ -1064,6 +1171,154 @@ model ExerciseSecondaryMuscle {
   @@map("exercise_secondary_muscles")
 }
 
+/// Logged member workout: with ?gymId use gym + subject user (GymUser); without, personal log (gymId null) for JWT user
+model MemberWorkoutPlan {
+  id          String    @id
+  userId      String    @map("user_id")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gymId       String?   @map("gym_id")
+  gym         Gym?      @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  gymUserId   String?   @map("gym_user_id")
+  member      GymUser?  @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
+  title       String
+  notes       String?
+  createdByRole String
+  createdByUserId String? @map("created_by_user_id")
+  createdByUser   User?   @relation("MemberWorkoutPlanCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  startedAt   DateTime? @map("started_at")
+  isStarted   Boolean   @default(false)
+  endedAt     DateTime? @map("ended_at")
+  completed   Boolean   @default(false)
+  isSaved     Boolean   @default(false) @map("is_saved")
+  totalVolume Int       @default(0) @map("total_volume")
+  totalSets   Int       @default(0) @map("total_sets")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  exercises WorkoutPlanExercise[]
+
+  @@index([userId])
+  @@index([gymId, userId])
+  @@index([gymUserId])
+  @@index([gymId])
+  @@map("member_workout_plans")
+}
+
+model WorkoutPlanExercise {
+  id         String            @id
+  workoutId  String            @map("workout_id")
+  workout    MemberWorkoutPlan @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+  exerciseId String            @map("exercise_id")
+  exercise   Exercise          @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
+  createdAt  DateTime          @default(now()) @map("created_at")
+
+  sets WorkoutExerciseSet[]
+
+  @@index([workoutId])
+  @@index([exerciseId])
+  @@map("workout_plan_exercises")
+}
+
+model WorkoutExerciseSet {
+  id                String              @id
+  workoutExerciseId String              @map("workout_exercise_id")
+  workoutExercise   WorkoutPlanExercise @relation(fields: [workoutExerciseId], references: [id], onDelete: Cascade)
+  setNumber         Int                 @map("set_number")
+  reps              Int                 @default(0)
+  weight            Int                 @default(0)
+  completed         Boolean             @default(false)
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  @@index([workoutExerciseId])
+  @@map("workout_exercise_sets")
+}
+
+/// User-owned exercise catalog (no gym) — `userId` = `User.id` from JWT `sub`
+model MemberPersonalExercise {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name             String
+  assetUrl         String?
+  equipment        ExerciseEquipment
+  primaryMuscle    Muscle
+  exerciseType     ExerciseType
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  secondaryMuscles MemberPersonalExerciseSecondaryMuscle[]
+  workoutPlanExercises MemberPersonalWorkoutPlanExercise[]
+
+  @@index([userId, name])
+  @@index([userId, isActive])
+  @@map("member_personal_exercises")
+}
+
+model MemberPersonalExerciseSecondaryMuscle {
+  id         String   @id @default(cuid())
+  exerciseId String
+  exercise   MemberPersonalExercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  muscle     Muscle
+
+  @@unique([exerciseId, muscle])
+  @@index([exerciseId])
+  @@map("member_personal_exercise_secondary_muscles")
+}
+
+/// Logged workout for a user without gym (`userId` = JWT `sub`)
+model MemberPersonalWorkoutPlan {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  notes       String?
+  startedAt   DateTime?
+  endedAt     DateTime?
+  completed   Boolean   @default(false)
+  totalVolume Int       @default(0)
+  totalSets   Int       @default(0)
+  duration    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  isSaved     Boolean   @default(false)
+
+  exercises MemberPersonalWorkoutPlanExercise[]
+
+  @@index([userId])
+  @@map("member_personal_workout_plans")
+}
+
+model MemberPersonalWorkoutPlanExercise {
+  id         String   @id @default(uuid())
+  workoutId  String
+  workout    MemberPersonalWorkoutPlan @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+  exerciseId String
+  exercise   MemberPersonalExercise @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
+  createdAt  DateTime @default(now())
+
+  sets MemberPersonalWorkoutExerciseSet[]
+
+  @@index([workoutId])
+  @@index([exerciseId])
+  @@map("member_personal_workout_plan_exercises")
+}
+
+model MemberPersonalWorkoutExerciseSet {
+  id                String   @id @default(uuid())
+  workoutExerciseId String
+  workoutExercise   MemberPersonalWorkoutPlanExercise @relation(fields: [workoutExerciseId], references: [id], onDelete: Cascade)
+  setNumber         Int
+  reps              Int      @default(0)
+  weight            Int      @default(0)
+  completed         Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([workoutExerciseId])
+  @@map("member_personal_workout_exercise_sets")
+}
+
 /// Meal type chips (Breakfast / Lunch / Dinner / Snack)
 enum DietMealType {
   BREAKFAST
@@ -1072,20 +1327,32 @@ enum DietMealType {
   SNACK
 }
 
+enum DietFoodUnitType {
+  KG
+  LITER
+  GRAM
+}
+
 /// Per-gym food catalog (searchable library for “Add Food”)
 model DietFood {
   id        String   @id @default(cuid())
-  gymId     String
-  gym       Gym      @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  userId    String
+  gymId     String?
+  gym       Gym?     @relation(fields: [gymId], references: [id], onDelete: Cascade)
   name      String
   weightKg  Decimal? @db.Decimal(10, 2)
   calories  Int
+  protein   Decimal? @db.Decimal(10, 2)
+  carbs     Decimal? @db.Decimal(10, 2)
+  fat       Decimal? @db.Decimal(10, 2)
+  unitType  DietFoodUnitType?
   quantity  Int      @default(1)
   imageUrl  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   mealLines DietMealFoodLine[]
+  consumptions DietFoodConsumption[]
 
   @@index([gymId, name])
   @@map("diet_foods")
@@ -1094,12 +1361,15 @@ model DietFood {
 /// Scheduled meal for a member (repeat days: 0 = Monday … 6 = Sunday)
 model DietMeal {
   id            String       @id @default(cuid())
-  gymId         String
-  gym           Gym          @relation(fields: [gymId], references: [id], onDelete: Cascade)
-  gymUserId     String
-  gymUser       GymUser      @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
+  userId        String
+  gymId         String?
+  gym           Gym?          @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  /// Set when meal is gym-scoped; null for user-only (free / personal) scheduled meals
+  gymUserId     String?
+  gymUser       GymUser?      @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
   name          String
   mealTime      String
+  createdByRole String
   mealType      DietMealType
   repeatEnabled Boolean      @default(false)
   repeatDays    Int[]        @default([])
@@ -1113,6 +1383,7 @@ model DietMeal {
 
 model DietMealFoodLine {
   id         String    @id @default(cuid())
+  userId     String
   mealId     String
   meal       DietMeal  @relation(fields: [mealId], references: [id], onDelete: Cascade)
   dietFoodId String?
@@ -1120,9 +1391,97 @@ model DietMealFoodLine {
   name       String
   weightKg   Decimal?  @db.Decimal(10, 2)
   calories   Int
+  protein    Decimal?  @db.Decimal(10, 2)
+  carbs      Decimal?  @db.Decimal(10, 2)
+  fat        Decimal?  @db.Decimal(10, 2)
+  unitType   DietFoodUnitType?
   quantity   Int       @default(1)
   sortOrder  Int       @default(0)
 
   @@index([mealId])
   @@map("diet_meal_food_lines")
+}
+
+/// One logged food line: scoped by `userId`; `gymId` optional (set when logging with a gym)
+model DietFoodConsumption {
+  id         String  @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gymId      String?
+  gym        Gym?     @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  dietFoodId String?
+  dietFood   DietFood? @relation(fields: [dietFoodId], references: [id], onDelete: SetNull)
+  name       String
+  weightKg   Decimal?  @db.Decimal(10, 2)
+  calories   Int
+  quantity   Int       @default(1)
+  /// Optional, e.g. "1 bowl" when not only weight-based
+  portionLabel String? @map("portion_label")
+  proteinG  Decimal? @db.Decimal(10, 2) @map("protein_g")
+  carbsG    Decimal? @db.Decimal(10, 2) @map("carbs_g")
+  fatG      Decimal? @db.Decimal(10, 2) @map("fat_g")
+  mealType  DietMealType
+  consumedOn DateTime @db.Date
+  /// Full timestamp for grouping and time-of-day display
+  consumedAt DateTime
+  imageUrl   String?  @map("image_url")
+  createdAt  DateTime @default(now())
+
+  @@index([userId, consumedOn])
+  @@index([gymId, consumedOn])
+  @@map("diet_food_consumptions")
+}
+
+// ---------------------------------------------------------------------------
+// In-app broadcast channels (per gym): members receive messages with title/body/image
+// ---------------------------------------------------------------------------
+
+model BroadcastChannel {
+  id             String   @id @default(cuid())
+  gymId          String
+  gym            Gym      @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?  @db.Text
+  /// Channel avatar / cover (CDN or uploads URL)
+  imageUrl       String?  @map("image_url")
+  createdByUserId String  @map("created_by_user_id")
+  createdBy      User     @relation("BroadcastChannelCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  members  BroadcastChannelMember[]
+  messages BroadcastMessage[]
+
+  @@index([gymId, createdAt(sort: Desc)])
+  @@index([gymId, name])
+  @@map("broadcast_channels")
+}
+
+/// Gym members (or other `GymUser` rows) subscribed to a channel
+model BroadcastChannelMember {
+  id        String   @id @default(cuid())
+  channelId String  @map("channel_id")
+  channel   BroadcastChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  gymUserId String  @map("gym_user_id")
+  gymUser   GymUser @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
+  joinedAt  DateTime @default(now()) @map("joined_at")
+
+  @@unique([channelId, gymUserId])
+  @@index([gymUserId])
+  @@map("broadcast_channel_members")
+}
+
+model BroadcastMessage {
+  id          String   @id @default(cuid())
+  channelId   String   @map("channel_id")
+  channel     BroadcastChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  title       String
+  description String?  @db.Text
+  imageUrl    String?  @map("image_url")
+  createdByUserId String @map("created_by_user_id")
+  createdBy   User     @relation("BroadcastMessageCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([channelId, createdAt(sort: Desc)])
+  @@map("broadcast_messages")
 }

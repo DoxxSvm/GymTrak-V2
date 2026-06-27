@@ -36,6 +36,8 @@ import { SystemConfigModule } from './modules/system-config/system-config.module
 import { AuditModule } from './modules/audit/audit.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { HealthModule } from './modules/health/health.module';
+import { LeaderboardModule } from './modules/leaderboard/leaderboard.module';
+import { BroadcastModule } from './modules/broadcast/broadcast.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
 import { TrainerLeavesModule } from './modules/trainer-leaves/trainer-leaves.module';
@@ -59,6 +61,8 @@ import { WorkoutsModule } from './modules/workouts/workouts.module';
     EventEmitterModule.forRoot(),
     PrismaModule,
     HealthModule,
+    LeaderboardModule,
+    BroadcastModule,
     AuthModule,
     PlatformModule,
     AdminModule,

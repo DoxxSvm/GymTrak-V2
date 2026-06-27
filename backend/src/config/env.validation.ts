@@ -1,4 +1,5 @@
 import { plainToInstance, Transform, Type } from 'class-transformer';
+import { normalizeFirebasePrivateKey } from '../common/firebase/firebase-credentials.util';
 import {
   IsBoolean,
   IsIn,
@@ -112,10 +113,107 @@ class EnvironmentVariables {
   @IsBoolean()
   OTP_STATIC_ENABLED?: boolean;
 
-  /** Plaintext OTP used in static mode (default 12345). */
+  /** Plaintext OTP used in static mode (default 123456). */
   @IsOptional()
   @IsString()
   OTP_STATIC_CODE?: string;
+
+  /**
+   * Master switch: `true` → send OTP via MSG91 SMS; `false` → static `OTP_STATIC_CODE` (default 123456).
+   * When unset, falls back to `OTP_PROVIDER=msg91`.
+   */
+  @IsOptional()
+  @Transform(({ obj }: { obj: Record<string, unknown> }) => {
+    const v = obj['IS_MSG91_ENABLED'];
+    if (v === true || v === 'true' || v === '1') return true;
+    if (v === false || v === 'false' || v === '0') return false;
+    return undefined;
+  })
+  @IsBoolean()
+  IS_MSG91_ENABLED?: boolean;
+
+  /** `local` (default bcrypt OTP) or `msg91` (SMS via MSG91). */
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && String(v).trim() !== '')
+  @Transform(({ obj }: { obj: Record<string, unknown> }) => {
+    const v = obj['OTP_PROVIDER'];
+    if (v == null || v === '') return undefined;
+    return String(v).trim().toLowerCase();
+  })
+  @IsIn(['local', 'msg91'])
+  OTP_PROVIDER?: 'local' | 'msg91';
+
+  @IsOptional()
+  @IsString()
+  MSG91_AUTH_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  MSG91_WIDGET_ID?: string;
+
+  /** Widget token from MSG91 dashboard (required when MSG91_USE_WIDGET=true). */
+  @IsOptional()
+  @IsString()
+  MSG91_TOKEN_AUTH?: string;
+
+  /** Use widget sendOtpMobile API instead of v5 /otp (enable Mobile Integration on widget). */
+  @IsOptional()
+  @Transform(({ obj }: { obj: Record<string, unknown> }) => {
+    const v = obj['MSG91_USE_WIDGET'];
+    return v === true || v === 'true' || v === '1';
+  })
+  @IsBoolean()
+  MSG91_USE_WIDGET?: boolean;
+
+  /** Optional MSG91 template id; required for reliable India DLT SMS delivery. */
+  @IsOptional()
+  @IsString()
+  MSG91_TEMPLATE_ID?: string;
+
+  /** DLT content template id from Indian DLT portal (mapped in MSG91). */
+  @IsOptional()
+  @IsString()
+  MSG91_DLT_TEMPLATE_ID?: string;
+
+  /** MSG91 sender / header id (when required by your template). */
+  @IsOptional()
+  @IsString()
+  MSG91_SENDER_ID?: string;
+
+  /** OTP validity in minutes (MSG91 `otp_expiry`). */
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === '') return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  })
+  MSG91_OTP_EXPIRY_MINUTES?: number;
+
+  /** Number of digits in MSG91 OTP (4–9, default 6). */
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === '') return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  })
+  MSG91_OTP_LENGTH?: number;
+
+  /** When true, refuse send if MSG91_TEMPLATE_ID is unset. */
+  @IsOptional()
+  @Transform(({ obj }: { obj: Record<string, unknown> }) => {
+    const v = obj['MSG91_REQUIRE_TEMPLATE_ID'];
+    return v === true || v === 'true' || v === '1';
+  })
+  @IsBoolean()
+  MSG91_REQUIRE_TEMPLATE_ID?: boolean;
+
+  @IsOptional()
+  @Transform(({ obj }: { obj: Record<string, unknown> }) => {
+    const v = obj['MSG91_SKIP_SEND'];
+    return v === true || v === 'true' || v === '1';
+  })
+  @IsBoolean()
+  MSG91_SKIP_SEND?: boolean;
 
   @IsOptional()
   @IsString()
@@ -144,6 +242,11 @@ class EnvironmentVariables {
   @IsString()
   APP_PUBLIC_URL?: string;
 
+  /** Optional Swagger server entry for local/dev testing (no trailing slash) */
+  @IsOptional()
+  @IsString()
+  SWAGGER_LOCAL_SERVER_URL?: string;
+
   /** `meta` (default) or `twilio` */
   @IsOptional()
   @IsString()
@@ -157,6 +260,21 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   WHATSAPP_PHONE_NUMBER_ID?: string;
+
+  /** Header image URL for Meta onboarding template */
+  @IsOptional()
+  @IsString()
+  WHATSAPP_ONBOARDING_HEADER_IMAGE_URL?: string;
+
+  /** Override Meta template name for onboarding (default: onboarding) */
+  @IsOptional()
+  @IsString()
+  WHATSAPP_TEMPLATE_ONBOARDING_NAME?: string;
+
+  /** Override Meta template name for payment confirmation (default: payment_confirmation_gt) */
+  @IsOptional()
+  @IsString()
+  WHATSAPP_TEMPLATE_PAYMENT_NAME?: string;
 
   @IsOptional()
   @IsString()
@@ -233,6 +351,65 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   AUTH_DEV_USER_ID?: string;
+
+  /** Firebase service account JSON (single line). Alternative: discrete FIREBASE_* vars or FIREBASE_SERVICE_ACCOUNT_PATH. */
+  @IsOptional()
+  @IsString()
+  FIREBASE_SERVICE_ACCOUNT_JSON?: string;
+
+  /** Path to Firebase service account JSON file (server filesystem). */
+  @IsOptional()
+  @IsString()
+  FIREBASE_SERVICE_ACCOUNT_PATH?: string;
+
+  /** Discrete service account fields (same names as JSON keys, upper snake). Prefer with FIREBASE_PRIVATE_KEY. */
+  @IsOptional()
+  @IsString()
+  FIREBASE_TYPE?: string;
+
+  @IsOptional()
+  @IsString()
+  FIREBASE_PROJECT_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  FIREBASE_PRIVATE_KEY_ID?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value == null || String(value).trim() === '') return value;
+    return normalizeFirebasePrivateKey(String(value)) ?? value;
+  })
+  @IsString()
+  FIREBASE_PRIVATE_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  FIREBASE_CLIENT_EMAIL?: string;
+
+  @IsOptional()
+  @IsString()
+  FIREBASE_CLIENT_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  FIREBASE_AUTH_URI?: string;
+
+  @IsOptional()
+  @IsString()
+  FIREBASE_TOKEN_URI?: string;
+
+  @IsOptional()
+  @IsString()
+  FIREBASE_AUTH_PROVIDER_CERT_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  FIREBASE_CLIENT_CERT_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  FIREBASE_UNIVERSE_DOMAIN?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

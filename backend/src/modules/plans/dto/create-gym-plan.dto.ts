@@ -42,8 +42,11 @@ export class CreateGymPlanDto {
   @MaxLength(8)
   currency?: string;
 
-  /// PT_PLAN: required
-  @ValidateIf((o: CreateGymPlanDto) => o.type === PlanType.PT_PLAN)
+  /// PT_PLAN and BATCH_PLAN: trainer `GymUser` id at this gym
+  @ValidateIf(
+    (o: CreateGymPlanDto) =>
+      o.type === PlanType.PT_PLAN || o.type === PlanType.BATCH_PLAN,
+  )
   @IsString()
   @IsNotEmpty()
   trainerGymUserId?: string;

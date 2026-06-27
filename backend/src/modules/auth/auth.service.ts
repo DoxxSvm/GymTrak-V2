@@ -7,16 +7,24 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { GlobalRole, GymRole, OtpPurpose } from '@prisma/client';
+import {
+  AppOnboardingRole,
+  GlobalRole,
+  GymRole,
+  OtpPurpose,
+} from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes } from 'crypto';
+import { toE164Phone } from '../../common/utils/phone.util';
 import { PrismaService } from '../prisma/prisma.service';
-import { WhatsAppApiService } from '../messaging/whatsapp-api.service';
 import { PermissionEngineService } from '../rbac/permission-engine.service';
 import { OtpService } from './otp.service';
+import { Msg91OtpService } from './msg91-otp.service';
 import { SessionService } from './session.service';
 import type { AuthResponse } from './types/auth-session.type';
 import type { JwtPayload, JwtUser } from './types/jwt-user.type';
+import { activePersonaFromOwnerRow } from './types/jwt-user.type';
+import { LastActiveRole } from '@prisma/client';
 
 export interface TokenPair {
   accessToken: string;
@@ -34,10 +42,30 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly otp: OtpService,
+    private readonly msg91: Msg91OtpService,
     private readonly session: SessionService,
-    private readonly whatsappApi: WhatsAppApiService,
     private readonly permissionEngine: PermissionEngineService,
   ) {}
+
+  getMsg91Status() {
+    return this.msg91.getStatus();
+  }
+
+  async testMsg91Send(phone: string, countryCode?: string) {
+    const e164Phone = this.toE164(phone, countryCode);
+    return this.msg91.sendTestOtp(e164Phone);
+  }
+
+  async retryMsg91Voice(phone: string, countryCode?: string) {
+    const e164Phone = this.toE164(phone, countryCode);
+    await this.msg91.retryOtp(e164Phone, { retryType: 'voice' });
+    return {
+      ok: true as const,
+      e164: e164Phone,
+      mobile: this.msg91.toMsg91Mobile(e164Phone),
+      message: 'MSG91 voice OTP retry requested. Answer the call if SMS did not arrive.',
+    };
+  }
 
   async sendOtp(phone: string, purpose: OtpPurpose) {
     if (
@@ -71,8 +99,8 @@ export class AuthService {
 
     const user = await this.prisma.user.upsert({
       where: { phone },
-      create: { phone },
-      update: {},
+      create: { phone, phoneVerified: true },
+      update: { phoneVerified: true },
       select: { id: true, phone: true, globalRole: true },
     });
 
@@ -171,16 +199,11 @@ export class AuthService {
     const e164Phone = this.toE164(phone, countryCode);
     const existing = await this.prisma.user.findUnique({
       where: { phone: e164Phone },
-      select: { id: true },
+      select: { id: true, onboardingCompletedAt: true },
     });
-    const isRegistered = !!existing;
+    const isRegistered = !!existing && !!existing.onboardingCompletedAt;
 
     await this.otp.createChallenge(e164Phone, OtpPurpose.PHONE_LOGIN);
-    const ttlSeconds = this.config.get<number>('OTP_CODE_TTL_SECONDS') ?? 300;
-    await this.whatsappApi.sendText(
-      e164Phone,
-      `Your GymTrak OTP is valid for ${Math.ceil(ttlSeconds / 60)} minutes.`,
-    );
     this.logger.log(
       `Phone login OTP sent for ${e164Phone} registered=${isRegistered}`,
     );
@@ -254,11 +277,6 @@ export class AuthService {
       e164Phone,
       OtpPurpose.PHONE_LOGIN,
     );
-    const ttlSeconds = this.config.get<number>('OTP_CODE_TTL_SECONDS') ?? 300;
-    await this.whatsappApi.sendText(
-      e164Phone,
-      `Your GymTrak OTP is valid for ${Math.ceil(ttlSeconds / 60)} minutes.`,
-    );
     this.logger.log(`OTP send attempt success for ${e164Phone}`);
 
     return {
@@ -293,6 +311,11 @@ export class AuthService {
         globalRole: true,
         fullName: true,
         status: true,
+        selectedOnboardingRole: true,
+        onboardingCompletedAt: true,
+        lastActiveRole: true,
+        ownedGyms: { select: { id: true }, take: 1 },
+        memberProfile: { select: { id: true } },
       },
     });
 
@@ -314,13 +337,51 @@ export class AuthService {
     }
 
     const tokens = await this.issueTokenPair(user);
-    const role = await this.resolveMobileAppRole(user.id, user.globalRole);
+    let role = await this.resolveMobileAppRole(
+      user.id,
+      user.globalRole,
+      user.selectedOnboardingRole as AppOnboardingRole,
+      user.lastActiveRole
+    );
+    // Gym owners: `resolveMobileAppRole` can yield `trainer` when `selectedOnboardingRole`
+    // is unset; always derive owner-app persona from `lastActiveRole` + `member_profiles`.
+    if (user.ownedGyms.length > 0) {
+      const persona = activePersonaFromOwnerRow({
+        lastActiveRole: user.lastActiveRole,
+        ownedGyms: user.ownedGyms,
+        memberProfile: user.memberProfile,
+      });
+      role = persona === 'member' ? 'member' : 'gym_owner';
+    }
     const gym_id = await this.getDefaultGymIdForUser(user.id);
     await this.prisma.user.update({
       where: { id: user.id },
       data: { phoneVerified: true },
     });
     this.logger.log(`OTP verification success for ${e164Phone}`);
+
+    if (
+      role === 'member' &&
+      !user.onboardingCompletedAt &&
+      user.ownedGyms.length === 0
+    ) {
+      return {
+        success: true as const,
+        registration_state: 'onboarding_required' as const,
+        isRegistered: false as const,
+        app_role: role,
+        access_token: tokens.accessToken,
+        refresh_token: tokens.refreshToken,
+        gym_id,
+        user: {
+          id: user.id,
+          name: user.fullName ?? '',
+          phone: user.phone,
+          role,
+        },
+      };
+    }
+
     return {
       success: true as const,
       registration_state: 'registered' as const,
@@ -341,9 +402,17 @@ export class AuthService {
   private async resolveMobileAppRole(
     userId: string,
     globalRole: GlobalRole,
-  ): Promise<'gym_owner' | 'trainer' | 'super_admin'> {
-    if (globalRole === GlobalRole.SUPER_ADMIN) {
+    selectedOnboardingRole?: AppOnboardingRole,
+    lastActiveRole?: LastActiveRole,
+  ): Promise<'gym_owner' | 'trainer' | 'super_admin' | 'owner' | 'member'> {
+
+    if (selectedOnboardingRole === 'OWNER') {
+      return lastActiveRole === 'OWNER' ? 'gym_owner' : 'member';
+    }
+    else if (globalRole === GlobalRole.SUPER_ADMIN) {
       return 'super_admin';
+    } else if (globalRole === GlobalRole.USER) {
+      return selectedOnboardingRole === 'MEMBER' ? 'member' : 'trainer';
     }
     const trainer = await this.prisma.gymUser.findFirst({
       where: { userId, isActive: true, role: GymRole.TRAINER },
@@ -406,11 +475,6 @@ export class AuthService {
       gymMembership?.role === GymRole.TRAINER
         ? await this.resolveApprovedStaffGymId(user.id, gymMembership.gymId)
         : null;
-    if (gymMembership?.role === GymRole.TRAINER && !approvedGymIdForTrainer) {
-      throw new UnauthorizedException(
-        'No approved permissions assigned for this trainer account',
-      );
-    }
 
     const gymId =
       approvedGymIdForTrainer ?? (await this.getDefaultGymIdForUser(user.id));
@@ -494,6 +558,35 @@ export class AuthService {
     return memberRow?.gymId ?? null;
   }
 
+  /**
+   * Persona encoded into JWT on login/refresh/switch. Heals `lastActiveRole=MEMBER` without a profile row.
+   */
+  async resolveActiveAppPersonaForIssue(
+    userId: string,
+  ): Promise<JwtPayload['activeAppRole']> {
+    const row = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        lastActiveRole: true,
+        ownedGyms: { select: { id: true }, take: 1 },
+        memberProfile: { select: { id: true } },
+      },
+    });
+    if (!row || row.ownedGyms.length === 0) return undefined;
+    if (row.lastActiveRole === 'MEMBER' && !row.memberProfile) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { lastActiveRole: 'OWNER' },
+      });
+      return 'owner';
+    }
+    return activePersonaFromOwnerRow({
+      lastActiveRole: row.lastActiveRole,
+      ownedGyms: row.ownedGyms,
+      memberProfile: row.memberProfile,
+    });
+  }
+
   async issueTokenPair(
     user: {
       id: string;
@@ -515,11 +608,13 @@ export class AuthService {
       gymIdOverride !== undefined
         ? gymIdOverride
         : await this.getDefaultGymIdForUser(user.id);
+    const activeAppRole = await this.resolveActiveAppPersonaForIssue(user.id);
     const payload: JwtPayload = {
       sub: user.id,
       phone: user.phone,
       globalRole: user.globalRole,
       gymId,
+      ...(activeAppRole !== undefined ? { activeAppRole } : {}),
     };
 
     const accessToken = await this.jwt.signAsync(payload);
@@ -571,7 +666,9 @@ export class AuthService {
         return gymId;
       }
     }
-    return null;
+    // Active trainer/staff at this gym but no RBAC rows yet (or only non-matrix
+    // permissions): still attach a gym so login and session bootstrap succeed.
+    return orderedGymIds[0] ?? null;
   }
 
   private hashOpaqueToken(token: string): string {
@@ -579,15 +676,11 @@ export class AuthService {
   }
 
   private toE164(phone: string, countryCode?: string): string {
-    const digits = phone.replace(/\D/g, '');
-    if (digits.length < 6 || digits.length > 15) {
+    try {
+      return toE164Phone(phone, countryCode?.trim() || '+91');
+    } catch {
       throw new BadRequestException('Invalid phone number');
     }
-    const cc = (countryCode?.trim() || '+91').replace(/[^\d+]/g, '');
-    if (!/^\+[1-9]\d{0,4}$/.test(cc)) {
-      throw new BadRequestException('Invalid country_code');
-    }
-    return `${cc}${digits}`;
   }
 
   /** Parses simple Nest/JWT duration strings: 15m, 7d, 24h, 3600s */

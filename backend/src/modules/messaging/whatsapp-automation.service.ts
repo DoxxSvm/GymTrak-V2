@@ -47,7 +47,10 @@ export class WhatsAppAutomationService {
         gymId,
         memberUserId,
       } satisfies SendTextJob,
-      WHATSAPP_SEND_JOB_OPTS,
+      {
+        jobId: `wa-WELCOME-${gymId}-${memberUserId}`,
+        ...WHATSAPP_SEND_JOB_OPTS,
+      },
     );
   }
 
@@ -64,7 +67,10 @@ export class WhatsAppAutomationService {
         memberUserId,
         paymentId,
       } satisfies SendTextJob,
-      WHATSAPP_SEND_JOB_OPTS,
+      {
+        jobId: `wa-PAYMENT-${paymentId}`,
+        ...WHATSAPP_SEND_JOB_OPTS,
+      },
     );
   }
 
@@ -76,10 +82,50 @@ export class WhatsAppAutomationService {
     memberUserId: string,
     memberSubscriptionId?: string,
   ): Promise<void> {
+    await this.enqueueExpiryJob(
+      'EXPIRY_REMINDER_7D',
+      gymId,
+      memberUserId,
+      memberSubscriptionId,
+    );
+  }
+
+  async enqueueExpiryReminder3d(
+    gymId: string,
+    memberUserId: string,
+    memberSubscriptionId?: string,
+  ): Promise<void> {
+    await this.enqueueExpiryJob(
+      'EXPIRY_REMINDER_3D',
+      gymId,
+      memberUserId,
+      memberSubscriptionId,
+    );
+  }
+
+  async enqueuePostExpiryReminder(
+    gymId: string,
+    memberUserId: string,
+    memberSubscriptionId?: string,
+  ): Promise<void> {
+    await this.enqueueExpiryJob(
+      'POST_EXPIRY',
+      gymId,
+      memberUserId,
+      memberSubscriptionId,
+    );
+  }
+
+  private async enqueueExpiryJob(
+    kind: 'EXPIRY_REMINDER_7D' | 'EXPIRY_REMINDER_3D' | 'POST_EXPIRY',
+    gymId: string,
+    memberUserId: string,
+    memberSubscriptionId?: string,
+  ): Promise<void> {
     await this.whatsappQueue.add(
       'send-text',
       {
-        kind: 'EXPIRY_REMINDER_7D',
+        kind,
         gymId,
         memberUserId,
         memberSubscriptionId,

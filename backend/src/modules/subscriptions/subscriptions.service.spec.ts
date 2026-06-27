@@ -78,7 +78,7 @@ describe('SubscriptionsService', () => {
         startsAt: '2026-04-02T00:00:00.000Z',
         endsAt: '2026-06-02T00:00:00.000Z',
         priceCents: 10000,
-        currency: 'USD',
+        currency: 'INR',
       }),
     );
     expect(result).toEqual({ success: true, subscription_id: 'sub-1' });

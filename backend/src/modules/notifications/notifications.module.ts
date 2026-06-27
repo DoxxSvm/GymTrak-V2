@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PrismaModule } from '../prisma/prisma.module';
 import { NotificationEventsListener } from './notification-events.listener';
 import { NotificationsController } from './notifications.controller';
+import { FirebasePushService } from './firebase-push.service';
 import { NotificationsGateway } from './notifications.gateway';
 import { NotificationsService } from './notifications.service';
 
@@ -21,6 +22,7 @@ import { NotificationsService } from './notifications.service';
   ],
   controllers: [NotificationsController],
   providers: [
+    FirebasePushService,
     NotificationsGateway,
     NotificationsService,
     NotificationEventsListener,

@@ -1,3 +1,4 @@
+import { PERMISSION_CODES } from '../../common/permissions/permission-codes';
 import { TrainersController } from './trainers.controller';
 
 describe('TrainersController', () => {
@@ -33,19 +34,19 @@ describe('TrainersController', () => {
       },
       credentials: {
         trainer_id: '#9509000',
-        password: '1212@522',
+        password: 'test-password',
       },
-      permissions: {
-        add_clients: true,
-        show_dashboard: true,
-        show_payments: false,
-        show_payment_in_details: true,
-        add_trainer: true,
-      },
+      permissions: [
+        PERMISSION_CODES.MEMBERS,
+        PERMISSION_CODES.DASHBOARD,
+        PERMISSION_CODES.PAYMENTS,
+        PERMISSION_CODES.ADMIN,
+      ],
     });
 
     expect(trainers.create).toHaveBeenCalledWith('owner-1', {
       gymId: 'gym-1',
+      role: 'TRAINER',
       phone: '9999999999',
       fullName: 'John',
       avatarUrl: '/uploads/images/john.png',
@@ -54,22 +55,22 @@ describe('TrainersController', () => {
       experience: '5+ years',
       address: 'At-Rajkot',
       expertise: ['Strength', 'Yoga'],
-      salaryCents: 5000,
+      salaryCents: 50,
       salaryPeriod: 'MONTHLY',
       notes: undefined,
       shifts: [
         { dayOfWeek: 1, startTime: '08:00', endTime: '09:00' },
         { dayOfWeek: 3, startTime: '08:00', endTime: '09:00' },
       ],
-      permissions: {
-        members: true,
-        dashboard: true,
-        payments: true,
-        admin: true,
-      },
+      permissions: [
+        PERMISSION_CODES.MEMBERS,
+        PERMISSION_CODES.DASHBOARD,
+        PERMISSION_CODES.PAYMENTS,
+        PERMISSION_CODES.ADMIN,
+      ],
       generateLoginCredentials: false,
       username: '#9509000',
-      password: '1212@522',
+      password: 'test-password',
     });
   });
 });

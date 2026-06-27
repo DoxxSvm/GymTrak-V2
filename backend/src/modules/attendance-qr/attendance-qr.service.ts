@@ -20,17 +20,45 @@ type PunchQrPayload = {
 
 @Injectable()
 export class AttendanceQrService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async getMemberToken(actorUserId: string, gymId: string) {
+
+    const gym = await this.prisma.gym.findUnique({
+      where: { id: gymId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logoUrl: true,
+        qrSigningSecret: true,
+        ownerId: true,
+        owner: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    });
+
     const gymUser = await this.prisma.gymUser.findFirst({
       where: {
         gymId,
-        userId: actorUserId,
+        userId: gym?.ownerId,
         isActive: true,
-        role: { in: [GymRole.OWNER, GymRole.STAFF, GymRole.TRAINER, GymRole.MEMBER] },
+        role: {
+          in: [GymRole.OWNER, GymRole.STAFF, GymRole.TRAINER, GymRole.MEMBER],
+        },
       },
-      select: { id: true, role: true, attendanceBlocked: true, attendanceBlockedReason: true },
+      select: {
+        id: true,
+        role: true,
+        attendanceBlocked: true,
+        attendanceBlockedReason: true,
+      },
     });
     if (!gymUser) {
       throw new ForbiddenException(
@@ -40,13 +68,10 @@ export class AttendanceQrService {
     if (gymUser.role === GymRole.MEMBER && gymUser.attendanceBlocked) {
       throw new ForbiddenException(
         gymUser.attendanceBlockedReason?.trim() ||
-          'Attendance is blocked for this member at this gym',
+        'Attendance is blocked for this member at this gym',
       );
     }
-    const gym = await this.prisma.gym.findUnique({
-      where: { id: gymId },
-      select: { id: true, name: true, slug: true, qrSigningSecret: true },
-    });
+
     if (!gym) {
       throw new NotFoundException('Gym not found');
     }
@@ -55,7 +80,7 @@ export class AttendanceQrService {
       purpose: 'attendance_punch',
       gymId,
       gymUserId: gymUser.id,
-      userId: actorUserId,
+      userId: gym.ownerId,
       role: gymUser.role,
     };
     const token = signPayload(gym.qrSigningSecret, payload);
@@ -68,6 +93,13 @@ export class AttendanceQrService {
       gymId: gym.id,
       name: gym.name,
       slug: gym.slug,
+      logoUrl: gym.logoUrl,
+      owner: {
+        id: gym.owner.id,
+        fullName: gym.owner.fullName,
+        phone: gym.owner.phone,
+        avatarUrl: gym.owner.avatarUrl,
+      },
       role: gymUser.role,
       token,
       qrBase64,
@@ -134,16 +166,14 @@ export class AttendanceQrService {
     if (gymUser.role === GymRole.MEMBER && gymUser.attendanceBlocked) {
       throw new ForbiddenException(
         gymUser.attendanceBlockedReason?.trim() ||
-          'Attendance is blocked for this member at this gym',
+        'Attendance is blocked for this member at this gym',
       );
     }
     if (gymUser.role === GymRole.OWNER) {
       if (actorUserId) {
         return this.punchLoggedInUserWithToken(actorUserId, token);
       }
-      throw new BadRequestException(
-        'Owner QR cannot be used for anonymous punch. Send Bearer token or use /attendance-qr/punch/me.',
-      );
+      return this.punchOwner(parsed.gymId, parsed.userId);
     }
 
     if (gymUser.role === GymRole.TRAINER || gymUser.role === GymRole.STAFF) {
@@ -209,7 +239,7 @@ export class AttendanceQrService {
     ) {
       throw new ForbiddenException(
         actorGymUser.attendanceBlockedReason?.trim() ||
-          'Attendance is blocked for this member at this gym',
+        'Attendance is blocked for this member at this gym',
       );
     }
 
@@ -233,38 +263,20 @@ export class AttendanceQrService {
 
   private async punchMember(gymId: string, memberUserId: string) {
     const attendedOn = utcDateOnly(new Date());
-    const existing = await this.prisma.attendanceRecord.findUnique({
-      where: {
-        gymId_memberUserId_attendedOn: {
-          gymId,
-          memberUserId,
-          attendedOn,
-        },
-      },
+    const openSession = await this.prisma.attendanceRecord.findFirst({
+      where: { gymId, memberUserId, attendedOn, checkedOutAt: null },
+      orderBy: { checkedInAt: 'desc' },
     });
 
-    if (existing?.checkedOutAt) {
-      return {
-        ok: true as const,
-        duplicate: true as const,
-        attendedOn,
-        gymId,
-        checkedInAt: existing.checkedInAt.toISOString(),
-        checkedOutAt: existing.checkedOutAt.toISOString(),
-        message: 'Already checked out today',
-      };
-    }
-
-    if (existing && !existing.checkedOutAt) {
+    if (openSession) {
       const now = new Date();
       const updated = await this.prisma.attendanceRecord.update({
-        where: { id: existing.id },
+        where: { id: openSession.id },
         data: { checkedOutAt: now },
         select: { checkedInAt: true, checkedOutAt: true },
       });
       return {
         ok: true as const,
-        duplicate: false as const,
         action: 'clock_out' as const,
         attendedOn,
         gymId,
@@ -286,7 +298,6 @@ export class AttendanceQrService {
 
     return {
       ok: true as const,
-      duplicate: false as const,
       action: 'clock_in' as const,
       attendedOn: row.attendedOn,
       gymId,
@@ -300,42 +311,21 @@ export class AttendanceQrService {
     userId: string,
     role: 'TRAINER' | 'STAFF',
   ) {
-    const roleLabel = role === GymRole.STAFF ? 'Staff' : 'Trainer';
     const attendedOn = utcDateOnly(new Date());
-    const existing = await this.prisma.trainerAttendanceRecord.findUnique({
-      where: {
-        gymId_trainerUserId_attendedOn: {
-          gymId,
-          trainerUserId: userId,
-          attendedOn,
-        },
-      },
+    const openSession = await this.prisma.trainerAttendanceRecord.findFirst({
+      where: { gymId, trainerUserId: userId, attendedOn, checkedOutAt: null },
+      orderBy: { checkedInAt: 'desc' },
     });
 
-    if (existing?.checkedOutAt) {
-      return {
-        ok: true as const,
-        duplicate: true as const,
-        attendedOn,
-        gymId,
-        gymUserId,
-        role,
-        checkedInAt: existing.checkedInAt.toISOString(),
-        checkedOutAt: existing.checkedOutAt.toISOString(),
-        message: `${roleLabel} already clocked out today`,
-      };
-    }
-
-    if (existing && !existing.checkedOutAt) {
+    if (openSession) {
       const now = new Date();
       const updated = await this.prisma.trainerAttendanceRecord.update({
-        where: { id: existing.id },
+        where: { id: openSession.id },
         data: { checkedOutAt: now },
         select: { attendedOn: true, checkedInAt: true, checkedOutAt: true },
       });
       return {
         ok: true as const,
-        duplicate: false as const,
         action: 'clock_out' as const,
         attendedOn: updated.attendedOn,
         gymId,
@@ -358,7 +348,6 @@ export class AttendanceQrService {
 
     return {
       ok: true as const,
-      duplicate: false as const,
       action: 'clock_in' as const,
       attendedOn: row.attendedOn,
       gymId,
@@ -368,6 +357,55 @@ export class AttendanceQrService {
     };
   }
 
+  private async punchOwner(gymId: string, ownerUserId: string) {
+    const attendedOn = utcDateOnly(new Date());
+    const openSession = await this.prisma.trainerAttendanceRecord.findFirst({
+      where: {
+        gymId,
+        trainerUserId: ownerUserId,
+        attendedOn,
+        checkedOutAt: null,
+      },
+      orderBy: { checkedInAt: 'desc' },
+    });
+
+    if (openSession) {
+      const now = new Date();
+      const updated = await this.prisma.trainerAttendanceRecord.update({
+        where: { id: openSession.id },
+        data: { checkedOutAt: now },
+        select: { attendedOn: true, checkedInAt: true, checkedOutAt: true },
+      });
+      return {
+        ok: true as const,
+        action: 'clock_out' as const,
+        attendedOn: updated.attendedOn,
+        gymId,
+        role: GymRole.OWNER,
+        checkedInAt: updated.checkedInAt.toISOString(),
+        checkedOutAt: updated.checkedOutAt?.toISOString() ?? null,
+      };
+    }
+
+    const row = await this.prisma.trainerAttendanceRecord.create({
+      data: {
+        gymId,
+        trainerUserId: ownerUserId,
+        attendedOn,
+        checkedInAt: new Date(),
+      },
+      select: { attendedOn: true, checkedInAt: true },
+    });
+
+    return {
+      ok: true as const,
+      action: 'clock_in' as const,
+      attendedOn: row.attendedOn,
+      gymId,
+      role: GymRole.OWNER,
+      checkedInAt: row.checkedInAt.toISOString(),
+    };
+  }
 }
 
 function utcDateOnly(d: Date): Date {
@@ -376,10 +414,7 @@ function utcDateOnly(d: Date): Date {
   );
 }
 
-function signPayload(
-  secret: string,
-  payload: PunchQrPayload,
-): string {
+function signPayload(secret: string, payload: PunchQrPayload): string {
   const body = Buffer.from(JSON.stringify(payload), 'utf8');
   const sig = createHmac('sha256', secret).update(body).digest('base64url');
   return `${body.toString('base64url')}.${sig}`;

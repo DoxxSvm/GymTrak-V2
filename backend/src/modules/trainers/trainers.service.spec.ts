@@ -186,10 +186,12 @@ describe('TrainersService', () => {
       gymUserPermission: {
         deleteMany: jest.fn().mockResolvedValue(undefined),
         createMany: jest.fn().mockResolvedValue(undefined),
-        findMany: jest.fn().mockResolvedValue([
-          { permission: { code: 'dashboard:access' } },
-          { permission: { code: 'members:manage' } },
-        ]),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { permission: { code: 'dashboard:access' } },
+            { permission: { code: 'members:manage' } },
+          ]),
       },
     };
     prisma.$transaction.mockImplementation(async (cb) =>
@@ -228,7 +230,7 @@ describe('TrainersService', () => {
         gymId: 'gym-1',
         phone: '9999999999',
         fullName: 'John',
-        permissions: {},
+        permissions: [],
         username: '#9509000',
       }),
     ).rejects.toThrow('Provide both username and password, or neither');

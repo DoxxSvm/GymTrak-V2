@@ -49,7 +49,10 @@ export class UpdateGymPlanDto {
   @IsBoolean()
   isActive?: boolean;
 
-  @ValidateIf((o: UpdateGymPlanDto) => o.type === PlanType.PT_PLAN)
+  @ValidateIf(
+    (o: UpdateGymPlanDto) =>
+      o.type === PlanType.PT_PLAN || o.type === PlanType.BATCH_PLAN,
+  )
   @IsOptional()
   @IsString()
   trainerGymUserId?: string | null;

@@ -1,12 +1,15 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Max,
+  MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { InitialMemberSubscriptionDto } from '../../members/dto/create-member.dto';
@@ -24,6 +27,12 @@ export class ConvertEnquiryDto {
   @IsOptional()
   @IsString()
   emailOverride?: string;
+
+  /** When set, replaces enquiry `photoUrl` and is written to the new member’s `User.avatarUrl`. Omit to use the enquiry’s current `photoUrl`. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  photoUrlOverride?: string;
 
   @IsOptional()
   @Type(() => Number)
@@ -51,6 +60,19 @@ export class ConvertEnquiryDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'string' && value.trim() === '') return undefined;
+    return typeof value === 'string' ? value.replace(/\D/g, '') : value;
+  })
+  @ValidateIf((_, v) => v !== undefined && v !== null && v !== '')
+  @IsString()
+  @Matches(/^\d{12}$/, {
+    message: 'aadhaar_number must be exactly 12 digits when provided',
+  })
+  aadhaar_number?: string;
 
   @IsOptional()
   @ValidateNested()

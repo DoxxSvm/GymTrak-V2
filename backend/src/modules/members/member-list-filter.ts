@@ -32,7 +32,10 @@ export function memberListFilterWhere(
       return {
         isLead: false,
         isActive: true,
-        membershipEndsAt: { not: null, lt: start },
+        OR: [
+          { membershipEndsAt: null },
+          { membershipEndsAt: { lt: start } },
+        ],
       };
     case MemberListFilter.EXPIRING:
       return {
@@ -48,10 +51,7 @@ export function memberListFilterWhere(
       return {
         isLead: false,
         isActive: true,
-        OR: [
-          { membershipEndsAt: null },
-          { membershipEndsAt: { gt: windowEnd } },
-        ],
+        membershipEndsAt: { not: null, gt: windowEnd },
       };
     default:
       return {};

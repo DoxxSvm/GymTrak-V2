@@ -19,7 +19,8 @@ export class ProductFavoritesController {
   @Get('favorites')
   @ApiOperation({
     summary: 'List my favorite products',
-    description: 'Requires `gymId` or `gym_id`. Any active gym member at that gym.',
+    description:
+      'Requires `gymId` or `gym_id`. Any active gym member at that gym.',
   })
   listFavorites(
     @CurrentUser() user: JwtUser,

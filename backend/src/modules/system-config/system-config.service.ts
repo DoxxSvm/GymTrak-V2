@@ -76,7 +76,7 @@ export class SystemConfigService {
       where: { gymId },
       create: {
         gymId,
-        currency: dto.currency?.trim().toUpperCase() ?? 'USD',
+        currency: dto.currency?.trim().toUpperCase() ?? 'INR',
         gstEnabled: dto.gstEnabled ?? false,
         gstRatePercent:
           dto.gstRatePercent === undefined || dto.gstRatePercent === null
@@ -110,7 +110,7 @@ export class SystemConfigService {
     const json = row?.defaultPlanConfig;
     return {
       gymId,
-      currency: row?.currency ?? 'USD',
+      currency: row?.currency ?? 'INR',
       gstEnabled: row?.gstEnabled ?? false,
       gstRatePercent:
         row?.gstRatePercent != null ? Number(row.gstRatePercent) : null,

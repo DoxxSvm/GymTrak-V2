@@ -3,6 +3,11 @@ import { MessageTemplateKind, Prisma } from '@prisma/client';
 import { GymAccessService } from '../../common/services/gym-access.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { defaultBodyForKind } from './template-copy';
+import {
+  automationMetaById,
+  WHATSAPP_AUTOMATION_TEMPLATES,
+} from './whatsapp-automation.config';
+import type { WhatsAppAutomationTemplateItemDto } from './dto/whatsapp-automation.dto';
 
 @Injectable()
 export class MessageTemplatesService {
@@ -26,6 +31,86 @@ export class MessageTemplatesService {
         previewDefault: defaultBodyForKind(r.kind),
       })),
     };
+  }
+
+  /** Mobile **Whatsapp Automation → Message Templates** screen. */
+  async getAutomationScreen(actorUserId: string, gymId: string) {
+    await this.gymAccess.assertCanManageGym(actorUserId, gymId);
+    await this.ensureDefaults(gymId);
+    const rows = await this.prisma.gymMessageTemplate.findMany({
+      where: { gymId },
+    });
+    const byKind = new Map(rows.map((r) => [r.kind, r]));
+
+    return {
+      screenTitle: 'Message Templates',
+      screenDescription:
+        'Configure automated WhatsApp messages for your members. These messages will be sent automatically based on the triggers below.',
+      templates: WHATSAPP_AUTOMATION_TEMPLATES.map((meta) => {
+        const row = byKind.get(meta.kind);
+        const defaultMessage = defaultBodyForKind(meta.kind);
+        const overrideBody = row?.overrideBody ?? null;
+        return {
+          id: meta.id,
+          title: meta.title,
+          description: meta.description,
+          autoTrigger: meta.autoTrigger,
+          enabled: row?.enabled ?? true,
+          ...(meta.supportsCustomMessage
+            ? {
+                message: overrideBody ?? defaultMessage,
+                defaultMessage,
+              }
+            : {}),
+        };
+      }),
+    };
+  }
+
+  async saveAutomationScreen(
+    actorUserId: string,
+    gymId: string,
+    templates: WhatsAppAutomationTemplateItemDto[],
+  ) {
+    await this.gymAccess.assertCanManageGym(actorUserId, gymId);
+    await this.ensureDefaults(gymId);
+
+    const seen = new Set<string>();
+    for (const item of templates) {
+      if (seen.has(item.id)) {
+        continue;
+      }
+      seen.add(item.id);
+      const meta = automationMetaById(item.id);
+      if (!meta) {
+        continue;
+      }
+      const data: Prisma.GymMessageTemplateUpdateInput = {
+        enabled: item.enabled,
+      };
+      if (meta.supportsCustomMessage && item.message !== undefined) {
+        data.overrideBody = item.message?.trim() || null;
+      }
+      await this.prisma.gymMessageTemplate.update({
+        where: { gymId_kind: { gymId, kind: meta.kind } },
+        data,
+      });
+    }
+
+    return this.getAutomationScreen(actorUserId, gymId);
+  }
+
+  /** Used by WhatsApp processor before sending (missing row = enabled). */
+  async isTemplateEnabled(
+    gymId: string,
+    kind: MessageTemplateKind,
+  ): Promise<boolean> {
+    await this.ensureDefaults(gymId);
+    const row = await this.prisma.gymMessageTemplate.findUnique({
+      where: { gymId_kind: { gymId, kind } },
+      select: { enabled: true },
+    });
+    return row?.enabled !== false;
   }
 
   async update(

@@ -53,10 +53,21 @@ scratch/
 # Backend (NestJS)
 backend/node_modules/
 backend/dist/
-backend/.env
-backend/.env.local
-backend/uploads/
 backend/coverage/
+backend/uploads/
+backend/secrets/*
+!backend/secrets/*.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+backend/**/*-firebase-adminsdk-*.json
+backend/**/*.pem
+backend/**/*.p12
+backend/**/*.key
+backend/service-account*.json
+backend/*.log
+backend/.vscode/
+backend/.cursor/
 
 # OS
 .DS_Store

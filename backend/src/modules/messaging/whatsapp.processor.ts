@@ -11,6 +11,8 @@ import {
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { defaultBodyForKind, interpolate } from './template-copy';
+import { MessageTemplatesService } from './message-templates.service';
+import { formatPaymentAmount } from './whatsapp-templates';
 import type { SendTextJob } from './whatsapp-automation.service';
 import {
   WHATSAPP_QUEUE,
@@ -22,12 +24,12 @@ import { NOTIFICATION_EVENTS } from '../notifications/domain-events';
 /** Days before `endsAt` (UTC calendar day) to enqueue pre-expiry WhatsApp messages. */
 const PRE_EXPIRY_OFFSET_DAYS = [7, 3] as const;
 
-const OFFSET_TO_JOB_KIND: Record<
+const OFFSET_TO_TEMPLATE_KIND: Record<
   number,
-  'EXPIRY_REMINDER_7D' | 'EXPIRY_REMINDER_3D'
+  MessageTemplateKind
 > = {
-  7: 'EXPIRY_REMINDER_7D',
-  3: 'EXPIRY_REMINDER_3D',
+  7: MessageTemplateKind.EXPIRY_REMINDER_7D,
+  3: MessageTemplateKind.EXPIRY_REMINDER_3D,
 };
 
 function memberGymWhere(
@@ -46,6 +48,7 @@ export class WhatsAppProcessor extends WorkerHost {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly templates: MessageTemplatesService,
     private readonly whatsapp: WhatsAppApiService,
     private readonly events: EventEmitter2,
     @InjectQueue(WHATSAPP_QUEUE) private readonly whatsappQueue: Queue,
@@ -76,6 +79,13 @@ export class WhatsAppProcessor extends WorkerHost {
     };
     const templateKind = kindMap[data.kind];
 
+    if (!(await this.templates.isTemplateEnabled(data.gymId, templateKind))) {
+      this.logger.debug(
+        `Skip WhatsApp ${data.kind}: automation disabled for gym ${data.gymId}`,
+      );
+      return;
+    }
+
     const gym = await this.prisma.gym.findUnique({
       where: { id: data.gymId },
       select: { id: true, name: true },
@@ -89,9 +99,6 @@ export class WhatsAppProcessor extends WorkerHost {
         gymId_kind: { gymId: data.gymId, kind: templateKind },
       },
     });
-    if (template && !template.enabled) {
-      return;
-    }
 
     const member = await this.prisma.user.findUnique({
       where: { id: data.memberUserId },
@@ -108,11 +115,13 @@ export class WhatsAppProcessor extends WorkerHost {
       gymName: gym.name,
       memberName: member.fullName?.trim() || 'Member',
       amount: '',
-      currency: 'USD',
+      currency: 'INR',
       expiryDate: '',
       expiredOn: '',
       daysRemaining: '',
     };
+
+    let paymentPlanLabel = 'Gym membership';
 
     if (data.kind === 'PAYMENT_CONFIRMATION' && data.paymentId) {
       const pay = await this.prisma.payment.findFirst({
@@ -122,12 +131,25 @@ export class WhatsAppProcessor extends WorkerHost {
           memberUserId: data.memberUserId,
           status: PaymentStatus.COMPLETED,
         },
+        include: {
+          memberSubscription: {
+            select: {
+              gymPlan: { select: { name: true } },
+              plan: { select: { name: true } },
+            },
+          },
+        },
       });
       if (!pay) {
         return;
       }
-      vars.amount = (pay.amountCents / 100).toFixed(2);
+      vars.amount = pay.amountCents.toString();
       vars.currency = pay.currency;
+      paymentPlanLabel =
+        pay.memberSubscription?.gymPlan?.name?.trim() ||
+        pay.memberSubscription?.plan?.name?.trim() ||
+        pay.description?.trim() ||
+        paymentPlanLabel;
     }
 
     if (
@@ -169,6 +191,33 @@ export class WhatsAppProcessor extends WorkerHost {
     }
 
     const text = interpolate(bodyTemplate, vars);
+
+    if (data.kind === 'WELCOME') {
+      const hasCustom = Boolean(template?.overrideBody?.trim());
+      if (hasCustom) {
+        await this.whatsapp.sendText(member.phone, text);
+      } else {
+        await this.whatsapp.sendOnboardingTemplate(member.phone, {
+          gymName: gym.name,
+          fallbackText: text,
+        });
+      }
+      return;
+    }
+
+    if (data.kind === 'PAYMENT_CONFIRMATION') {
+      await this.whatsapp.sendPaymentConfirmationTemplate(member.phone, {
+        memberName: vars.memberName,
+        amountFormatted: formatPaymentAmount(
+          Number(vars.amount),
+          vars.currency,
+        ),
+        planLabel: paymentPlanLabel,
+        fallbackText: text,
+      });
+      return;
+    }
+
     await this.whatsapp.sendText(member.phone, text);
   }
 
@@ -194,10 +243,12 @@ export class WhatsAppProcessor extends WorkerHost {
     return this.prisma.memberSubscription.findFirst({
       where: {
         gymUser: memberGymWhere(gymId, memberUserId),
+        isCurrentSubscription: true,
         status: {
           in: [
             MemberSubscriptionStatus.ACTIVE,
             MemberSubscriptionStatus.SCHEDULED,
+            MemberSubscriptionStatus.FROZEN,
           ],
         },
       },
@@ -213,17 +264,19 @@ export class WhatsAppProcessor extends WorkerHost {
 
       const subs = await this.prisma.memberSubscription.findMany({
         where: {
+          isCurrentSubscription: true,
           status: {
             in: [
               MemberSubscriptionStatus.ACTIVE,
               MemberSubscriptionStatus.SCHEDULED,
+              MemberSubscriptionStatus.FROZEN,
             ],
           },
           endsAt: {
             gte: target,
             lt: next,
           },
-          gymUser: { role: 'MEMBER' },
+          gymUser: { role: 'MEMBER', isActive: true },
         },
         select: {
           id: true,
@@ -239,13 +292,24 @@ export class WhatsAppProcessor extends WorkerHost {
       });
 
       const dayKey = target.toISOString().slice(0, 10);
-      const jobKind = OFFSET_TO_JOB_KIND[offset];
-      if (!jobKind) {
+      const jobKind =
+        offset === 7 ? 'EXPIRY_REMINDER_7D' : 'EXPIRY_REMINDER_3D';
+      const templateKind = OFFSET_TO_TEMPLATE_KIND[offset];
+      if (!templateKind) {
         continue;
       }
 
+      const gymIds = [...new Set(subs.map((s) => s.gymUser.gymId))];
+      const enabledGyms = await this.gymsWithAutomationEnabled(
+        gymIds,
+        templateKind,
+      );
+
       for (const s of subs) {
         const gu = s.gymUser;
+        if (!enabledGyms.has(gu.gymId)) {
+          continue;
+        }
         this.events.emit(NOTIFICATION_EVENTS.EXPIRY_ALERT, {
           gymId: gu.gymId,
           memberSubscriptionId: s.id,
@@ -283,11 +347,15 @@ export class WhatsAppProcessor extends WorkerHost {
 
     const subs = await this.prisma.memberSubscription.findMany({
       where: {
+        isCurrentSubscription: true,
+        status: {
+          not: MemberSubscriptionStatus.CANCELED,
+        },
         endsAt: {
           gte: yesterdayStart,
           lt: todayStart,
         },
-        gymUser: { role: 'MEMBER' },
+        gymUser: { role: 'MEMBER', isActive: true },
       },
       select: {
         id: true,
@@ -302,8 +370,16 @@ export class WhatsAppProcessor extends WorkerHost {
       },
     });
 
+    const enabledGyms = await this.gymsWithAutomationEnabled(
+      [...new Set(subs.map((s) => s.gymUser.gymId))],
+      MessageTemplateKind.POST_EXPIRY,
+    );
+
     for (const s of subs) {
       const gu = s.gymUser;
+      if (!enabledGyms.has(gu.gymId)) {
+        continue;
+      }
       this.events.emit(NOTIFICATION_EVENTS.EXPIRY_ALERT, {
         gymId: gu.gymId,
         memberSubscriptionId: s.id,
@@ -330,6 +406,22 @@ export class WhatsAppProcessor extends WorkerHost {
   @OnWorkerEvent('failed')
   onFailed(job: Job | undefined, err: Error): void {
     this.logger.error(`Job ${job?.id} failed: ${err.message}`, err.stack);
+  }
+
+  private async gymsWithAutomationEnabled(
+    gymIds: string[],
+    kind: MessageTemplateKind,
+  ): Promise<Set<string>> {
+    const enabled = new Set<string>();
+    const unique = [...new Set(gymIds)];
+    await Promise.all(
+      unique.map(async (gymId) => {
+        if (await this.templates.isTemplateEnabled(gymId, kind)) {
+          enabled.add(gymId);
+        }
+      }),
+    );
+    return enabled;
   }
 }
 

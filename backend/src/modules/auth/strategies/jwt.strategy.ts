@@ -5,6 +5,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from '../auth.service';
 import type { JwtPayload } from '../types/jwt-user.type';
+import { activePersonaFromOwnerRow } from '../types/jwt-user.type';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
@@ -35,7 +36,15 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, phone: true, globalRole: true, status: true },
+      select: {
+        id: true,
+        phone: true,
+        globalRole: true,
+        status: true,
+        lastActiveRole: true,
+        ownedGyms: { select: { id: true }, take: 1 },
+        memberProfile: { select: { id: true } },
+      },
     });
     if (!user || user.status !== 'ACTIVE') {
       throw new UnauthorizedException();
@@ -43,11 +52,18 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     const gymId =
       payload.gymId ?? (await this.auth.getDefaultGymIdForUser(user.id));
 
+    const activeAppRole = activePersonaFromOwnerRow({
+      lastActiveRole: user.lastActiveRole,
+      ownedGyms: user.ownedGyms,
+      memberProfile: user.memberProfile,
+    });
+
     return {
       sub: user.id,
       phone: user.phone,
       globalRole: user.globalRole,
       gymId,
+      ...(activeAppRole !== undefined ? { activeAppRole } : {}),
     };
   }
 }

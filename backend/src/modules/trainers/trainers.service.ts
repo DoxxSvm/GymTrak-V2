@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AppOnboardingRole,
   AuditAction,
   AuditEntityType,
   GlobalRole,
@@ -44,6 +45,10 @@ import type { TrainerShiftDto } from './dto/trainer-shift.dto';
 import type { UpdateTrainerDto } from './dto/update-trainer.dto';
 import type { TrainerPermissionsDto } from './dto/trainer-permissions.dto';
 import type { PayTrainerSalaryMobileDto } from './dto/pay-trainer-salary-mobile.dto';
+import {
+  getTrainerPermissions,
+  PERMISSION_CODES,
+} from '../../common/permissions/permission-codes';
 
 @Injectable()
 export class TrainersService {
@@ -53,7 +58,7 @@ export class TrainersService {
     private readonly features: GymFeaturesService,
     private readonly permissionEngine: PermissionEngineService,
     private readonly audit: AuditService,
-  ) {}
+  ) { }
 
   /** For staff login: RBAC toggles for the current user at this gym (trainer or staff). */
   async getSelfPermissions(actorUserId: string, gymId: string) {
@@ -79,6 +84,7 @@ export class TrainersService {
   async list(
     actorUserId: string,
     gymId: string,
+    role: string | undefined,
     q: string | undefined,
     includeInactive: boolean | undefined,
     limit: number,
@@ -89,18 +95,18 @@ export class TrainersService {
     const qq = q?.trim();
     const where: Prisma.GymUserWhereInput = {
       gymId,
-      role: GymRole.TRAINER,
+      role: role ? { in: [role as GymRole] } : GymRole.TRAINER,
       ...(includeInactive ? {} : { isActive: true }),
       ...(qq
         ? {
-            user: {
-              OR: [
-                { fullName: { contains: qq, mode: 'insensitive' } },
-                { phone: { contains: qq } },
-                { username: { contains: qq, mode: 'insensitive' } },
-              ],
-            },
-          }
+          user: {
+            OR: [
+              { fullName: { contains: qq, mode: 'insensitive' } },
+              { phone: { contains: qq } },
+              { username: { contains: qq, mode: 'insensitive' } },
+            ],
+          },
+        }
         : {}),
     };
 
@@ -165,24 +171,28 @@ export class TrainersService {
         expertise: r.trainerExpertise.map((e) => e.tag.name),
         salary: r.trainerProfile
           ? {
-              salaryCents: r.trainerProfile.salaryCents,
-              salaryPeriod: r.trainerProfile.salaryPeriod,
-              contractStartsAt: r.trainerProfile.contractStartsAt,
-              contractEndsAt: r.trainerProfile.contractEndsAt,
-              experience: r.trainerProfile.experience,
-              address: r.trainerProfile.address,
-            }
+            salaryCents: r.trainerProfile.salaryCents,
+            salaryPeriod: r.trainerProfile.salaryPeriod,
+            contractStartsAt: r.trainerProfile.contractStartsAt,
+            contractEndsAt: r.trainerProfile.contractEndsAt,
+            experience: r.trainerProfile.experience,
+            address: r.trainerProfile.address,
+          }
           : null,
       })),
     };
   }
 
-  async getBasic(actorUserId: string, gymId: string, gymUserId: string) {
+  async getBasic(actorUserId: string, gymId: string, gymUserId: string, role?: string) {
     await this.assertTrainersFeature(gymId);
     await this.assertTrainerDetailAccess(actorUserId, gymId, gymUserId);
-    const row = await this.loadTrainerOrThrow(gymId, gymUserId);
-    const perms = await this.permissionFlags(row.id);
-    const base = this.serializeTrainerDetail(row, perms);
+    const row = await this.loadTrainerOrThrow(gymId, gymUserId, role);
+    const permissions = await getTrainerPermissions(
+      this.prisma,
+      row.user.id,
+      row.gymId,
+    );
+    const base = this.serializeTrainerDetail(row, permissions);
     const mobile = await this.buildTrainerDetailMobilePanels(gymId, row);
     return { ...base, ...mobile };
   }
@@ -195,8 +205,12 @@ export class TrainersService {
       gymId,
     );
     const row = await this.loadTrainerOrThrow(gymId, gymUserId);
-    const perms = await this.permissionFlags(row.id);
-    return this.serializeTrainerDetail(row, perms);
+    const permissions = await getTrainerPermissions(
+      this.prisma,
+      row.user.id,
+      row.gymId,
+    );
+    return this.serializeTrainerDetail(row, permissions);
   }
 
   /**
@@ -348,7 +362,7 @@ export class TrainersService {
       plans: plans.map((p) => ({
         plan_name: p.name,
         members_enrolled: countByPlan.get(p.id) ?? 0,
-        price: Math.round(p.priceCents / 100),
+        price: p.priceCents,
       })),
     };
   }
@@ -399,7 +413,7 @@ export class TrainersService {
         member_name: r.gymUser.user.fullName ?? '',
         phone: r.gymUser.user.phone ?? '',
         plan_name: r.gymPlan?.name ?? '',
-        plan_price: Math.round(r.priceCents / 100),
+        plan_price: r.priceCents,
         status: r.status.toLowerCase(),
       });
     }
@@ -481,16 +495,16 @@ export class TrainersService {
       });
       trend.push({
         week: w + 1,
-        revenue: Math.round((agg._sum.amountCents ?? 0) / 100),
+        revenue: agg._sum.amountCents ?? 0,
       });
     }
 
     return {
-      total_revenue: Math.round((totalAgg._sum.amountCents ?? 0) / 100),
+      total_revenue: totalAgg._sum.amountCents ?? 0,
       trend,
       recent_payments: recent.map((p) => ({
         member_name: p.memberUser?.fullName ?? '',
-        amount: Math.round(p.amountCents / 100),
+        amount: p.amountCents,
         date: (p.completedAt ?? p.createdAt).toISOString().slice(0, 10),
         mode: paymentMethodToApi(p.method ?? undefined),
       })),
@@ -506,9 +520,7 @@ export class TrainersService {
     await this.assertSubFeature(gymId, GymFeatureKey.trainer_payroll);
     await this.gymAccess.assertCanManageGym(actorUserId, gymId);
     const trainer = await this.loadTrainerOrThrow(gymId, gymUserId);
-    const monthlySalary = Math.round(
-      (trainer.trainerProfile?.salaryCents ?? 0) / 100,
-    );
+    const monthlySalary = (trainer.trainerProfile?.salaryCents ?? 0);
     const now = new Date();
     const { start, endExclusive } = monthUtcRange(
       now.getUTCFullYear(),
@@ -529,7 +541,7 @@ export class TrainersService {
       orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
     });
     const paidCents = payments.reduce((s, p) => s + p.amountCents, 0);
-    const paid_amount = Math.round(paidCents / 100);
+    const paid_amount = paidCents;
     const pending_amount = Math.max(0, monthlySalary - paid_amount);
     const history = await this.prisma.trainerSalaryPayment.findMany({
       where: { gymId, gymUserId },
@@ -541,7 +553,7 @@ export class TrainersService {
       paid_amount,
       pending_amount,
       payment_history: history.map((h) => ({
-        amount: Math.round(h.amountCents / 100),
+        amount: h.amountCents,
         date: (h.paidAt ?? h.createdAt).toISOString().slice(0, 10),
         mode: paymentMethodToApi(h.method ?? undefined),
       })),
@@ -559,15 +571,15 @@ export class TrainersService {
     await this.gymAccess.assertGymOwnerOrSuperAdmin(actorUserId, gymId);
     await this.loadTrainerOrThrow(gymId, gymUserId);
     const method = paymentMethodFromApi(dto.payment_mode);
-    const amountCents = dto.amount * 100;
+    const amountCents = dto.amount;
     const anchorDay = dto.date?.trim()
       ? (() => {
-          const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dto.date!.trim());
-          if (!m) {
-            throw new BadRequestException('date must be YYYY-MM-DD');
-          }
-          return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 0, 0, 0, 0));
-        })()
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dto.date!.trim());
+        if (!m) {
+          throw new BadRequestException('date must be YYYY-MM-DD');
+        }
+        return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 0, 0, 0, 0));
+      })()
       : startOfUtcDay(new Date());
     const y = anchorDay.getUTCFullYear();
     const mo = anchorDay.getUTCMonth() + 1;
@@ -581,7 +593,7 @@ export class TrainersService {
           gymId,
           gymUserId,
           amountCents,
-          currency: 'USD',
+          currency: 'INR',
           method,
           periodStart,
           periodEnd,
@@ -607,7 +619,7 @@ export class TrainersService {
     const profile = await this.prisma.trainerProfile.findUnique({
       where: { gymUserId },
     });
-    const monthlySalary = Math.round((profile?.salaryCents ?? 0) / 100);
+    const monthlySalary = (profile?.salaryCents ?? 0);
     const paidInMonth = await this.prisma.trainerSalaryPayment.aggregate({
       where: {
         gymId,
@@ -622,7 +634,7 @@ export class TrainersService {
       },
       _sum: { amountCents: true },
     });
-    const paidTotal = Math.round((paidInMonth._sum.amountCents ?? 0) / 100);
+    const paidTotal = (paidInMonth._sum.amountCents ?? 0);
 
     return {
       success: true as const,
@@ -696,6 +708,13 @@ export class TrainersService {
     }
     this.assertCredentialInput(dto.username, dto.password);
 
+    const resolvedRole = dto.role?.toUpperCase() as GymRole ?? GymRole.TRAINER;
+    if (resolvedRole !== GymRole.TRAINER && resolvedRole !== GymRole.STAFF) {
+      throw new BadRequestException(
+        'Only trainer or staff role can be created via this endpoint',
+      );
+    }
+
     const phone = dto.phone.trim();
     let credentialPlain: { username: string; password: string } | undefined;
 
@@ -721,6 +740,8 @@ export class TrainersService {
         (await tx.user.create({
           data: {
             phone,
+            selectedOnboardingRole: resolvedRole as AppOnboardingRole,
+            onboardingCompletedAt: new Date(),
             fullName: dto.fullName.trim(),
             ...(emailNorm ? { email: emailNorm } : {}),
             avatarUrl: dto.avatarUrl?.trim() || undefined,
@@ -729,6 +750,8 @@ export class TrainersService {
       if (existingUser) {
         const userUpdate: Prisma.UserUpdateInput = {
           fullName: dto.fullName.trim(),
+          onboardingCompletedAt: new Date(),
+          selectedOnboardingRole: resolvedRole as AppOnboardingRole,
         };
         if (dto.email != null && dto.email.length > 0) {
           userUpdate.email = emailNorm ?? undefined;
@@ -746,7 +769,7 @@ export class TrainersService {
         data: {
           userId: user.id,
           gymId: dto.gymId,
-          role: GymRole.TRAINER,
+          role: resolvedRole,
           isActive: true,
           dateOfBirth: dto.dateOfBirth
             ? this.parseDateValue(dto.dateOfBirth, 'dateOfBirth')
@@ -759,6 +782,9 @@ export class TrainersService {
         data: {
           gymUserId: gu.id,
           salaryCents: dto.salaryCents ?? null,
+          ...(dto.permissions != null && dto.permissions.length > 0
+            ? { trainerPermission: dto.permissions }
+            : { trainerPermission: [] }),
           salaryPeriod: dto.salaryPeriod ?? null,
           contractStartsAt: dto.contractStartsAt
             ? new Date(dto.contractStartsAt)
@@ -779,7 +805,37 @@ export class TrainersService {
       if (dto.planIds?.length) {
         await this.replacePlanAssignments(tx, dto.gymId, gu.id, dto.planIds);
       }
-      await this.syncTrainerPermissions(tx, gu.id, dto.permissions);
+      const hasExplicitPermissions =
+        Array.isArray(dto.permissions) && dto.permissions.length > 0;
+      if (hasExplicitPermissions) {
+        const flags = this.permissionsFromProfile(dto.permissions);
+        await this.syncTrainerPermissions(tx, gu.id, flags);
+      } else {
+        await this.seedGymUserPermissionsFromRoleDefaults(
+          tx,
+          gu.id,
+          resolvedRole,
+        );
+        const assignments = await tx.gymUserPermission.findMany({
+          where: { gymUserId: gu.id },
+          select: { permission: { select: { code: true } } },
+        });
+        const keys = [
+          ...new Set(
+            assignments
+              .map((row) =>
+                this.permissionCodeToTrainerProfileKey(row.permission.code),
+              )
+              .filter((k): k is string => !!k),
+          ),
+        ];
+        if (keys.length) {
+          await tx.trainerProfile.update({
+            where: { gymUserId: gu.id },
+            data: { trainerPermission: keys },
+          });
+        }
+      }
 
       if (dto.username && dto.password) {
         const username = await this.assertUsernameAvailable(
@@ -809,15 +865,17 @@ export class TrainersService {
     const created = await this.prisma.gymUser.findFirst({
       where: {
         gymId: dto.gymId,
-        role: GymRole.TRAINER,
+        role: resolvedRole,
         user: { phone },
       },
       select: { id: true },
     });
     if (!created) {
-      throw new BadRequestException('Trainer create failed');
+      throw new BadRequestException(
+        'Trainer or staff create failed — membership was not persisted',
+      );
     }
-    const detail = await this.getBasic(actorUserId, dto.gymId, created.id);
+    const detail = await this.getBasic(actorUserId, dto.gymId, created.id , resolvedRole);
     return credentialPlain
       ? { ...detail, loginCredentials: credentialPlain }
       : detail;
@@ -834,7 +892,7 @@ export class TrainersService {
     if (dto.shifts?.length) {
       await this.assertSubFeature(gymId, GymFeatureKey.trainer_shifts);
     }
-    await this.loadTrainerOrThrow(gymId, gymUserId);
+    await this.loadTrainerOrThrow(gymId, gymUserId, dto.role);
 
     await this.prisma.$transaction(async (tx) => {
       const gu = await tx.gymUser.findFirstOrThrow({
@@ -904,6 +962,11 @@ export class TrainersService {
       if (dto.notes !== undefined) {
         profileUpdate.notes = dto.notes?.trim() ?? null;
       }
+      if (dto.permissions !== undefined) {
+        Object.assign(profileUpdate as object, {
+          trainerPermission: dto.permissions as string[],
+        });
+      }
       if (Object.keys(profileUpdate).length > 0) {
         await tx.trainerProfile.update({
           where: { gymUserId: gu.id },
@@ -920,9 +983,9 @@ export class TrainersService {
       if (dto.planIds) {
         await this.replacePlanAssignments(tx, gymId, gu.id, dto.planIds);
       }
-      if (dto.permissions) {
-        await this.syncTrainerPermissions(tx, gu.id, dto.permissions);
-      }
+      // if (dto.permissions) {
+      //   await this.syncTrainerPermissions(tx, gu.id, dto.permissions as string[]);
+      // }
     });
 
     return this.getBasic(actorUserId, gymId, gymUserId);
@@ -1048,7 +1111,7 @@ export class TrainersService {
     return rows.map((r) => ({
       member_name: r.gymUser.user.fullName ?? '',
       plan_name: r.gymPlan?.name ?? '',
-      plan_price: Math.round(r.priceCents / 100),
+      plan_price: r.priceCents,
       status: r.status.toLowerCase(),
     }));
   }
@@ -1079,50 +1142,37 @@ export class TrainersService {
     };
   }
 
-  async punchAttendance(
-    actorUserId: string,
-    gymId: string,
-    gymUserId: string,
-  ) {
+  async punchAttendance(actorUserId: string, gymId: string, gymUserId: string) {
     await this.assertTrainersFeature(gymId);
     await this.assertSubFeature(gymId, GymFeatureKey.trainer_attendance);
     const row = await this.loadTrainerOrThrow(gymId, gymUserId);
     await this.assertTrainerAttendanceAccess(actorUserId, gymId, gymUserId);
     const attendedOn = startOfUtcDay(new Date());
-    const existing = await this.prisma.trainerAttendanceRecord.findUnique({
+    const openSession = await this.prisma.trainerAttendanceRecord.findFirst({
       where: {
-        gymId_trainerUserId_attendedOn: {
-          gymId,
-          trainerUserId: row.userId,
-          attendedOn,
-        },
+        gymId,
+        trainerUserId: row.userId,
+        attendedOn,
+        checkedOutAt: null,
       },
-      select: { id: true, attendedOn: true, checkedInAt: true, checkedOutAt: true },
+      orderBy: { checkedInAt: 'desc' },
+      select: {
+        id: true,
+        attendedOn: true,
+        checkedInAt: true,
+        checkedOutAt: true,
+      },
     });
 
-    if (existing?.checkedOutAt) {
-      return {
-        ok: true as const,
-        duplicate: true as const,
-        attendedOn: existing.attendedOn,
-        gymId,
-        trainerId: gymUserId,
-        checkedInAt: existing.checkedInAt.toISOString(),
-        checkedOutAt: existing.checkedOutAt.toISOString(),
-        message: 'Trainer already clocked out today',
-      };
-    }
-
-    if (existing && !existing.checkedOutAt) {
+    if (openSession) {
       const now = new Date();
       const updated = await this.prisma.trainerAttendanceRecord.update({
-        where: { id: existing.id },
+        where: { id: openSession.id },
         data: { checkedOutAt: now },
         select: { attendedOn: true, checkedInAt: true, checkedOutAt: true },
       });
       return {
         ok: true as const,
-        duplicate: false as const,
         action: 'clock_out' as const,
         attendedOn: updated.attendedOn,
         gymId,
@@ -1142,7 +1192,6 @@ export class TrainersService {
     });
     return {
       ok: true as const,
-      duplicate: false as const,
       action: 'clock_in' as const,
       attendedOn: rec.attendedOn,
       gymId,
@@ -1227,7 +1276,7 @@ export class TrainersService {
         gymId,
         gymUserId,
         amountCents: dto.amountCents,
-        currency: dto.currency?.trim() || 'USD',
+        currency: dto.currency?.trim() || 'INR',
         method,
         periodStart,
         periodEnd,
@@ -1254,14 +1303,6 @@ export class TrainersService {
       where: { gymId, userId: actorUserId, isActive: true },
       select: { id: true, role: true },
     });
-    if (actor?.role === GymRole.TRAINER) {
-      if (actor.id !== targetTrainerGymUserId) {
-        throw new ForbiddenException(
-          'Trainers can view only their own profile',
-        );
-      }
-      return;
-    }
     await this.gymAccess.assertCanManageGym(actorUserId, gymId);
   }
 
@@ -1273,9 +1314,13 @@ export class TrainersService {
     }
   }
 
-  private async loadTrainerOrThrow(gymId: string, gymUserId: string) {
+  private async loadTrainerOrThrow(gymId: string, gymUserId: string, role?: GymRole | string) {
     const row = await this.prisma.gymUser.findFirst({
-      where: { id: gymUserId, gymId, role: GymRole.TRAINER },
+      where: {
+        id: gymUserId,
+        gymId,
+        role: role ? { in: [role as GymRole] } : GymRole.TRAINER,
+      },
       include: {
         user: {
           select: {
@@ -1297,7 +1342,7 @@ export class TrainersService {
       },
     });
     if (!row) {
-      throw new NotFoundException('Trainer not found');
+      throw new NotFoundException('Trainer or staff not found');
     }
     return row;
   }
@@ -1322,6 +1367,7 @@ export class TrainersService {
   private serializeTrainerDetail(
     row: {
       id: string;
+      role: GymRole;
       isActive: boolean;
       dateOfBirth: Date | null;
       gender: string | null;
@@ -1338,6 +1384,7 @@ export class TrainersService {
       };
       trainerProfile: {
         salaryCents: number | null;
+        trainerPermission?: string[];
         salaryPeriod: SalaryPeriod | null;
         contractStartsAt: Date | null;
         contractEndsAt: Date | null;
@@ -1353,11 +1400,13 @@ export class TrainersService {
         endTime: string;
       }[];
     },
-    permissions: TrainerPermissionsDto,
+    permissions: string[],
   ) {
     return {
       tab: 'basic' as const,
       gymUserId: row.id,
+      /** Same shape for trainer & staff (`POST /trainers/compat`). */
+      role: row.role,
       userId: row.user.id,
       isActive: row.isActive,
       joinedAt: row.joinedAt,
@@ -1372,38 +1421,37 @@ export class TrainersService {
       },
       profile: row.trainerProfile
         ? {
-            dateOfBirth: row.dateOfBirth,
-            gender: row.gender,
-            salaryCents: row.trainerProfile.salaryCents,
-            salaryPeriod: row.trainerProfile.salaryPeriod,
-            contractStartsAt: row.trainerProfile.contractStartsAt,
-            contractEndsAt: row.trainerProfile.contractEndsAt,
-            experience: row.trainerProfile.experience,
-            address: row.trainerProfile.address,
-            notes: row.trainerProfile.notes,
-          }
+          dateOfBirth: row.dateOfBirth,
+          gender: row.gender,
+          salaryCents: row.trainerProfile.salaryCents,
+          salaryPeriod: row.trainerProfile.salaryPeriod,
+          contractStartsAt: row.trainerProfile.contractStartsAt,
+          contractEndsAt: row.trainerProfile.contractEndsAt,
+          experience: row.trainerProfile.experience,
+          address: row.trainerProfile.address,
+          notes: row.trainerProfile.notes,
+        }
         : {
-            dateOfBirth: row.dateOfBirth,
-            gender: row.gender,
-            salaryCents: null,
-            salaryPeriod: null,
-            contractStartsAt: null,
-            contractEndsAt: null,
-            experience: null,
-            address: null,
-            notes: null,
-          },
+          dateOfBirth: row.dateOfBirth,
+          gender: row.gender,
+          salaryCents: null,
+          salaryPeriod: null,
+          contractStartsAt: null,
+          contractEndsAt: null,
+          experience: null,
+          address: null,
+          notes: null,
+        },
       expertise: row.trainerExpertise.map((e) => e.tag.name),
-      shifts: row.trainerShifts.map((s) => ({
-        id: s.id,
-        dayOfWeek: s.dayOfWeek,
-        startTime: s.startTime,
-        endTime: s.endTime,
-      })),
-      permissions,
-      effective: this.permissionEngine.expandEffectivePermissions(
-        this.toEffectivePermissionMatrix(permissions),
-      ),
+      shifts: row.trainerShifts
+        .map((s) => ({
+          id: s.id,
+          dayOfWeek: (s.dayOfWeek + 6) % 7,
+          startTime: s.startTime,
+          endTime: s.endTime,
+        }))
+        .sort((a, b) => a.dayOfWeek - b.dayOfWeek),
+      permissions: permissions,
     };
   }
 
@@ -1458,13 +1506,12 @@ export class TrainersService {
         : Promise.resolve(this.emptyAttendancePanel()),
       payrollEnabled
         ? this.buildTrainerSalaryPanel(
-            gymId,
-            row.id,
-            row.trainerProfile?.salaryCents ?? null,
-          )
+          gymId,
+          row.id,
+          row.trainerProfile?.salaryCents ?? null,
+        )
         : Promise.resolve(this.emptySalaryPanel()),
     ]);
-
     return { plans, attendance, payments, salary };
   }
 
@@ -1560,6 +1607,7 @@ export class TrainersService {
         totalActivePlans: 0,
         totalSubscribers: 0,
         items: [] as {
+          id: string;
           type: string;
           name: string;
           durationLabel: string;
@@ -1612,11 +1660,12 @@ export class TrainersService {
       totalActivePlans: planRows.length,
       totalSubscribers: distinctMembers.length,
       items: planRows.map((p) => ({
+        id: p.id,
         type: this.planTypeDisplay(p.type),
         name: p.name,
         durationLabel: this.formatPlanDurationLabel(p.durationDays),
         activeClients: countByPlan.get(p.id) ?? 0,
-        price: Math.round(p.priceCents / 100),
+        price: p.priceCents,
         currency: p.currency,
         billingCycle: this.formatPlanBillingCycle(p.durationDays),
       })),
@@ -1723,8 +1772,8 @@ export class TrainersService {
         ),
       ]);
 
-    const currentWindow = Math.round(currentWindowCents / 100);
-    const prevWindow = Math.round(prevWindowCents / 100);
+    const currentWindow = currentWindowCents;
+    const prevWindow = prevWindowCents;
     let revenueChangePercent: number | null = null;
     if (prevWindow > 0) {
       revenueChangePercent = Math.round(
@@ -1735,17 +1784,17 @@ export class TrainersService {
     }
 
     return {
-      totalRevenue: Math.round((totalAgg._sum.amountCents ?? 0) / 100),
+      totalRevenue: totalAgg._sum.amountCents ?? 0,
       revenueChangePercent,
       chart: trendCents.map((cents, i) => ({
         week: i + 1,
-        revenue: Math.round(cents / 100),
+        revenue: cents,
       })),
       items: recent.map((p) => ({
         memberName: p.memberUser?.fullName ?? '',
         memberAvatarUrl: p.memberUser?.avatarUrl ?? null,
         subtitle: null as string | null,
-        amount: Math.round(p.amountCents / 100),
+        amount: p.amountCents,
         method: paymentMethodToApi(p.method ?? undefined),
       })),
     };
@@ -1841,7 +1890,7 @@ export class TrainersService {
     gymUserId: string,
     salaryCents: number | null,
   ) {
-    const monthlySalary = Math.round((salaryCents ?? 0) / 100);
+    const monthlySalary = Math.round((salaryCents ?? 0));
     const now = new Date();
     const { start, endExclusive } = monthUtcRange(
       now.getUTCFullYear(),
@@ -1862,7 +1911,7 @@ export class TrainersService {
       orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
     });
     const paidCents = payments.reduce((s, p) => s + p.amountCents, 0);
-    const paidAmount = Math.round(paidCents / 100);
+    const paidAmount = paidCents;
     const pendingAmount = Math.max(0, monthlySalary - paidAmount);
 
     const history = await this.prisma.trainerSalaryPayment.findMany({
@@ -1880,7 +1929,7 @@ export class TrainersService {
       return {
         title,
         date: (h.paidAt ?? h.createdAt).toISOString().slice(0, 10),
-        amount: Math.round(h.amountCents / 100),
+        amount: Math.round(h.amountCents),
         method,
       };
     });
@@ -1891,6 +1940,63 @@ export class TrainersService {
       pendingAmount,
       paymentHistory,
     };
+  }
+
+  private async seedGymUserPermissionsFromRoleDefaults(
+    tx: Prisma.TransactionClient,
+    gymUserId: string,
+    gymRole: GymRole,
+  ): Promise<void> {
+    const defaults = await tx.gymRolePermissionDefault.findMany({
+      where: { gymRole },
+      select: { permissionId: true },
+    });
+    if (defaults.length === 0) {
+      return;
+    }
+    await tx.gymUserPermission.createMany({
+      data: defaults.map((d) => ({
+        gymUserId,
+        permissionId: d.permissionId,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  /** Maps `Permission.code` to legacy `trainerProfile.trainerPermission` keys. */
+  private permissionCodeToTrainerProfileKey(code: string): string | null {
+    switch (code) {
+      case PERMISSION_CODES.DASHBOARD:
+        return 'show_dashboard';
+      case PERMISSION_CODES.MEMBERS:
+        return 'add_clients';
+      case PERMISSION_CODES.PAYMENTS:
+        return 'show_payments';
+      case PERMISSION_CODES.ADMIN:
+        return 'add_trainer';
+      case PERMISSION_CODES.LEAVE_CREATE:
+        return 'leaveCreate';
+      case PERMISSION_CODES.LEAVE_READ:
+        return 'leaveRead';
+      case PERMISSION_CODES.LEAVE_UPDATE:
+        return 'leaveUpdate';
+      case PERMISSION_CODES.LEAVE_DELETE:
+        return 'leaveDelete';
+      case PERMISSION_CODES.LEAVE_APPROVE:
+        return 'leaveApprove';
+      case PERMISSION_CODES.LEAVE_REJECT:
+        return 'leaveReject';
+      case PERMISSION_CODES.PRODUCT_CREATE:
+        return 'productCreate';
+      case PERMISSION_CODES.PRODUCT_READ:
+        return 'productRead';
+      case PERMISSION_CODES.PRODUCT_UPDATE:
+        return 'productUpdate';
+      case PERMISSION_CODES.PRODUCT_DELETE:
+        return 'productDelete';
+      default:
+        return null;
+    }
   }
 
   private async syncTrainerPermissions(
@@ -2046,14 +2152,92 @@ export class TrainersService {
   private normalizePermissionFlags(
     flags: Partial<TrainerPermissionsDto> | undefined,
   ) {
-    const dashboard = !!(flags?.dashboard || flags?.show_dashboard);
+    const dashboard = !!(
+      flags?.dashboard ||
+      flags?.show_dashboard ||
+      flags?.dashboardView ||
+      flags?.dashboardNotifications ||
+      flags?.dashboardPaymentsWidget ||
+      flags?.dashboardAnalytics
+    );
     const payments = !!(
       flags?.payments ||
       flags?.show_payments ||
-      flags?.show_payment_in_details
+      flags?.show_payment_in_details ||
+      flags?.paymentRead ||
+      flags?.paymentCreate ||
+      flags?.paymentUpdate ||
+      flags?.paymentDelete ||
+      flags?.invoiceGenerate ||
+      flags?.invoiceShare ||
+      flags?.salaryRead ||
+      flags?.salaryCreate ||
+      flags?.salaryUpdate ||
+      flags?.salaryDelete
     );
-    const members = !!(flags?.members || flags?.add_clients);
-    const admin = !!(flags?.admin || flags?.add_trainer);
+    const members = !!(
+      flags?.members ||
+      flags?.add_clients ||
+      flags?.clientRead ||
+      flags?.clientCreate ||
+      flags?.clientUpdate ||
+      flags?.clientDelete ||
+      flags?.clientDetailsRead ||
+      flags?.clientDetailsUpdate ||
+      flags?.clientDetailsDelete ||
+      flags?.subscriptionRead ||
+      flags?.subscriptionCreate ||
+      flags?.subscriptionRenew ||
+      flags?.subscriptionUpgrade ||
+      flags?.subscriptionFreeze ||
+      flags?.attendanceRead ||
+      flags?.workoutAssign ||
+      flags?.dietAssign ||
+      flags?.progressTrack ||
+      flags?.leadRead ||
+      flags?.leadCreate ||
+      flags?.leadUpdate ||
+      flags?.leadDelete ||
+      flags?.leadConvert ||
+      flags?.planClientsView
+    );
+    const admin = !!(
+      flags?.admin ||
+      flags?.add_trainer ||
+      flags?.leaveCreate ||
+      flags?.leaveRead ||
+      flags?.leaveUpdate ||
+      flags?.leaveDelete ||
+      flags?.leaveApprove ||
+      flags?.leaveReject ||
+      flags?.productCreate ||
+      flags?.productRead ||
+      flags?.productUpdate ||
+      flags?.productDelete ||
+      flags?.planRead ||
+      flags?.planCreate ||
+      flags?.planUpdate ||
+      flags?.planDelete ||
+      flags?.trainerRead ||
+      flags?.trainerCreate ||
+      flags?.trainerUpdate ||
+      flags?.trainerDelete ||
+      flags?.trainerCredentialsManage ||
+      flags?.trainerPermissionsAssign ||
+      flags?.expenseRead ||
+      flags?.expenseCreate ||
+      flags?.expenseUpdate ||
+      flags?.expenseDelete ||
+      flags?.gymRead ||
+      flags?.gymUpdate ||
+      flags?.gymDelete ||
+      flags?.broadcastWhatsapp ||
+      flags?.broadcastMessage ||
+      flags?.qrView ||
+      flags?.biometricCreate ||
+      flags?.biometricDelete ||
+      flags?.biometricBlock
+    );
     return {
       dashboard,
       payments,
@@ -2065,6 +2249,39 @@ export class TrainersService {
       add_clients: members,
       add_trainer: admin,
     };
+  }
+
+  private permissionsFromProfile(keys: string[] | null | undefined) {
+    const raw = (keys ?? []).reduce((acc, key) => {
+      (acc as Record<string, boolean>)[key] = true;
+      return acc;
+    }, {} as Partial<TrainerPermissionsDto>);
+    return {
+      ...raw,
+      ...this.normalizePermissionFlags(raw),
+    } as TrainerPermissionsDto;
+  }
+
+  private permissionsToList(flags: Partial<TrainerPermissionsDto> | undefined) {
+    if (!flags) {
+      return [];
+    }
+    return Object.entries(flags)
+      .filter(([, value]) => value === true)
+      .map(([key]) => key);
+  }
+
+  private appOnboardingRoleFromInviteGymRole(gymRole: GymRole): AppOnboardingRole {
+    switch (gymRole) {
+      case GymRole.OWNER:
+        return AppOnboardingRole.OWNER;
+      case GymRole.MEMBER:
+        return AppOnboardingRole.MEMBER;
+      case GymRole.STAFF:
+        return AppOnboardingRole.STAFF;
+      default:
+        return AppOnboardingRole.TRAINER;
+    }
   }
 
   private assertCredentialInput(

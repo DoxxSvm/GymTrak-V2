@@ -8,11 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOperation,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 // TEMP: trainer-leaves — re-enable before production
 // import { PERMISSION_CODES } from '../../common/permissions/permission-codes';
 // import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
@@ -36,11 +32,11 @@ export class TrainerLeavesController {
 
   @Get('balance')
   // @RequirePermissions(PERMISSION_CODES.LEAVE_READ)
-  @ApiOperation({ summary: 'Remaining leave balance (annual allowance − approved days this UTC year)' })
-  balance(
-    @CurrentUser() user: JwtUser,
-    @Query() query: LeaveBalanceQueryDto,
-  ) {
+  @ApiOperation({
+    summary:
+      'Remaining leave balance (annual allowance − approved days this UTC year)',
+  })
+  balance(@CurrentUser() user: JwtUser, @Query() query: LeaveBalanceQueryDto) {
     return this.leaves.balance(user.sub, query.gymId, query.trainerId);
   }
 

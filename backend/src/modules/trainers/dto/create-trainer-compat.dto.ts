@@ -10,6 +10,9 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { TrainerPermissionsDto } from './trainer-permissions.dto';
+import { TrainerShiftDto } from './trainer-shift.dto';
+import { GymRole } from '@prisma/client';
 
 class TrainerCredentialsDto {
   @IsOptional()
@@ -36,31 +39,29 @@ class TrainerShiftCompatDto {
   end_time: string;
 }
 
-class TrainerPermissionsCompatDto {
+class TrainerPermissionsCompatDto extends TrainerPermissionsDto {
   @IsOptional()
   add_members?: boolean;
-  @IsOptional()
-  add_clients?: boolean;
+
   @IsOptional()
   view_dashboard?: boolean;
-  @IsOptional()
-  show_dashboard?: boolean;
+
   @IsOptional()
   view_payments?: boolean;
-  @IsOptional()
-  show_payments?: boolean;
-  @IsOptional()
-  show_payment_in_details?: boolean;
+
   @IsOptional()
   view_member_details?: boolean;
-  @IsOptional()
-  add_trainer?: boolean;
 }
 
 export class CreateTrainerCompatDto {
   @IsString()
   @IsNotEmpty()
   gymId: string;
+
+  /** Omit or `TRAINER` (default); use `STAFF` for reception / admin staff — same response shape as trainer. */
+  @IsOptional()
+  @IsIn([GymRole.TRAINER, GymRole.STAFF])
+  role?: GymRole;
 
   @IsString()
   @IsNotEmpty()
@@ -106,6 +107,13 @@ export class CreateTrainerCompatDto {
   @IsString({ each: true })
   expertise?: string[];
 
+  /** Same as DB `TrainerShift` (0=Sun..6=Sat). If non-empty, legacy `shift` is ignored. */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TrainerShiftDto)
+  shifts?: TrainerShiftDto[];
+
   @IsOptional()
   @ValidateNested()
   @Type(() => TrainerShiftCompatDto)
@@ -117,7 +125,7 @@ export class CreateTrainerCompatDto {
   credentials?: TrainerCredentialsDto;
 
   @IsOptional()
-  @ValidateNested()
-  @Type(() => TrainerPermissionsCompatDto)
-  permissions?: TrainerPermissionsCompatDto;
+  // @ValidateNested()
+  // @Type(() => TrainerPermissionsCompatDto)
+  permissions?: string[];
 }

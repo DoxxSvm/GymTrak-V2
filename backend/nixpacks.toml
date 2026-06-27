@@ -1,8 +1,10 @@
-# Coolify / Nixpacks — Node version + env only; install uses Nixpacks default (npm install).
-# Build/start: keep Prisma + prod entry (defaults would skip prisma generate and use `nest start`).
+# Coolify / Nixpacks — install all deps for build (TypeScript, Nest CLI, Prisma).
+# Runtime needs `prisma` CLI for startup migrate deploy; it lives in dependencies.
 [variables]
 NIXPACKS_NODE_VERSION = "22"
-NIXPACKS_PATH = ""
+
+[phases.install]
+cmds = ["npm ci --include=dev"]
 
 [phases.build]
 cmds = ["npx prisma generate", "npm run build"]

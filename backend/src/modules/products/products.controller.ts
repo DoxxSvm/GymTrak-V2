@@ -42,17 +42,12 @@ export class ProductsController {
 
   @Post('products')
   @HttpCode(201)
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.PRODUCT_CREATE)
   @ApiOperation({
     summary: 'Create product',
     description:
       'Admin / staff with `product:create`. Body uses snake_case (`gym_id`, `discount_price`, …).',
   })
-  create(
-    @CurrentUser() user: JwtUser,
-    @Body(bodyPipe) body: CreateProductDto,
-  ) {
+  create(@CurrentUser() user: JwtUser, @Body(bodyPipe) body: CreateProductDto) {
     return this.products.create(user.sub, body);
   }
 
@@ -82,8 +77,6 @@ export class ProductsController {
   }
 
   @Patch('products/:id')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.PRODUCT_UPDATE)
   @ApiOperation({ summary: 'Update product' })
   @ApiParam({ name: 'id' })
   update(
@@ -101,8 +94,6 @@ export class ProductsController {
   }
 
   @Delete('products/:id')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions(PERMISSION_CODES.PRODUCT_DELETE)
   @ApiOperation({ summary: 'Soft-delete product' })
   @ApiParam({ name: 'id' })
   remove(

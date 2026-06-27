@@ -19,4 +19,4 @@ ENV NODE_ENV=production
 RUN npm prune --omit=dev
 
 EXPOSE 3000
-CMD ["node", "dist/main.js"]
+CMD ["node", "dist/main"]

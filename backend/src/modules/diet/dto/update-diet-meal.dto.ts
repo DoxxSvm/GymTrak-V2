@@ -6,6 +6,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -33,6 +34,16 @@ export class UpdateDietMealDto {
   @IsOptional()
   @IsEnum(DietMealType)
   meal_type?: DietMealType;
+
+  @ApiPropertyOptional({
+    enum: ['trainer', 'member'],
+    example: 'member',
+    description:
+      'Update creator bucket: `trainer` (OWNER/TRAINER/STAFF) or `member` (MEMBER).',
+  })
+  @IsOptional()
+  @IsIn(['trainer', 'member'])
+  created_by?: 'trainer' | 'member';
 
   @ApiPropertyOptional()
   @IsOptional()

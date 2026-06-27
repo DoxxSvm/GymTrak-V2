@@ -89,26 +89,32 @@ export class AttendanceService {
       const checkedInAt = dto.time?.trim()
         ? this.combineDateAndTime(attendedOn, dto.time)
         : new Date();
-      await this.prisma.attendanceRecord.upsert({
+      const existingRecord = await this.prisma.attendanceRecord.findFirst({
         where: {
-          gymId_memberUserId_attendedOn: {
-            gymId: member.gymId,
-            memberUserId: member.userId,
-            attendedOn,
-          },
-        },
-        create: {
           gymId: member.gymId,
           memberUserId: member.userId,
           attendedOn,
-          source: AttendanceSource.MANUAL,
-          checkedInAt,
+          checkedOutAt: null,
         },
-        update: {
-          checkedInAt,
-          source: AttendanceSource.MANUAL,
-        },
+        orderBy: { checkedInAt: 'desc' },
+        select: { id: true },
       });
+      if (existingRecord) {
+        await this.prisma.attendanceRecord.update({
+          where: { id: existingRecord.id },
+          data: { checkedInAt, source: AttendanceSource.MANUAL },
+        });
+      } else {
+        await this.prisma.attendanceRecord.create({
+          data: {
+            gymId: member.gymId,
+            memberUserId: member.userId,
+            attendedOn,
+            source: AttendanceSource.MANUAL,
+            checkedInAt,
+          },
+        });
+      }
     } else {
       await this.prisma.attendanceRecord.deleteMany({
         where: {
@@ -150,14 +156,14 @@ export class AttendanceService {
     const attendedOn = dto.date?.trim()
       ? this.parseDateOnly(dto.date)
       : utcDateOnly(new Date());
-    const existing = await this.prisma.attendanceRecord.findUnique({
+    const existing = await this.prisma.attendanceRecord.findFirst({
       where: {
-        gymId_memberUserId_attendedOn: {
-          gymId: member.gymId,
-          memberUserId: member.userId,
-          attendedOn,
-        },
+        gymId: member.gymId,
+        memberUserId: member.userId,
+        attendedOn,
+        checkedOutAt: null,
       },
+      orderBy: { checkedInAt: 'desc' },
       select: { id: true, checkedInAt: true },
     });
     if (existing) {
@@ -200,21 +206,18 @@ export class AttendanceService {
     const attendedOn = dto.date?.trim()
       ? this.parseDateOnly(dto.date)
       : utcDateOnly(new Date());
-    const row = await this.prisma.attendanceRecord.findUnique({
+    const row = await this.prisma.attendanceRecord.findFirst({
       where: {
-        gymId_memberUserId_attendedOn: {
-          gymId: member.gymId,
-          memberUserId: member.userId,
-          attendedOn,
-        },
+        gymId: member.gymId,
+        memberUserId: member.userId,
+        attendedOn,
+        checkedOutAt: null,
       },
+      orderBy: { checkedInAt: 'desc' },
       select: { id: true, checkedOutAt: true },
     });
     if (!row) {
-      throw new NotFoundException('No check-in found for this day');
-    }
-    if (row.checkedOutAt) {
-      throw new ConflictException('Already checked out for this day');
+      throw new NotFoundException('No open check-in found for this day');
     }
     const checkedOutAt = dto.time?.trim()
       ? this.combineDateAndTime(attendedOn, dto.time)
@@ -260,14 +263,14 @@ export class AttendanceService {
       ? this.combineDateAndTime(attendedOn, dto.time)
       : new Date();
 
-    const existing = await this.prisma.attendanceRecord.findUnique({
+    const existing = await this.prisma.attendanceRecord.findFirst({
       where: {
-        gymId_memberUserId_attendedOn: {
-          gymId: member.gymId,
-          memberUserId: member.userId,
-          attendedOn,
-        },
+        gymId: member.gymId,
+        memberUserId: member.userId,
+        attendedOn,
+        checkedOutAt: null,
       },
+      orderBy: { checkedInAt: 'desc' },
       select: { id: true, checkedInAt: true, checkedOutAt: true },
     });
 
@@ -291,9 +294,6 @@ export class AttendanceService {
       };
     }
 
-    if (existing.checkedOutAt) {
-      throw new ConflictException('Already checked out for this day');
-    }
     if (punchedAt.getTime() < existing.checkedInAt.getTime()) {
       throw new BadRequestException('check-out time cannot be before check-in');
     }
@@ -572,38 +572,25 @@ export class AttendanceService {
     }
 
     const attendedOn = utcDateOnly(new Date());
-    const existing = await this.prisma.attendanceRecord.findUnique({
+    const openSession = await this.prisma.attendanceRecord.findFirst({
       where: {
-        gymId_memberUserId_attendedOn: {
-          gymId,
-          memberUserId: row.memberUserId,
-          attendedOn,
-        },
+        gymId,
+        memberUserId: row.memberUserId,
+        attendedOn,
+        checkedOutAt: null,
       },
+      orderBy: { checkedInAt: 'desc' },
     });
 
-    if (existing?.checkedOutAt) {
-      return {
-        ok: true as const,
-        duplicate: true as const,
-        attendedOn,
-        gymId,
-        checkedInAt: existing.checkedInAt.toISOString(),
-        checkedOutAt: existing.checkedOutAt.toISOString(),
-        message: 'Already checked out today',
-      };
-    }
-
-    if (existing && !existing.checkedOutAt) {
+    if (openSession) {
       const now = new Date();
       const updated = await this.prisma.attendanceRecord.update({
-        where: { id: existing.id },
+        where: { id: openSession.id },
         data: { checkedOutAt: now },
         select: { checkedInAt: true, checkedOutAt: true },
       });
       return {
         ok: true as const,
-        duplicate: false as const,
         action: 'clock_out' as const,
         attendedOn,
         gymId,
@@ -627,7 +614,6 @@ export class AttendanceService {
 
     return {
       ok: true as const,
-      duplicate: false as const,
       action: 'clock_in' as const,
       attendedOn,
       gymId,

@@ -11,6 +11,8 @@ export interface UnifiedPersonalInfo {
   firstName: string;
   lastName: string;
   fullName: string;
+  phone: string;
+  email: string;
   profileImage: string | null;
   dateOfBirth: string | null;
   gender: 'male' | 'female' | 'other' | null;

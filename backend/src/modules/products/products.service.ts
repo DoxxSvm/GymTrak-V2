@@ -99,13 +99,9 @@ export class ProductsService {
 
     await this.gymAccess.assertCanBrowseGymCatalog(actorUserId, gymId);
 
-    const canManage = await this.perm.hasProductManagement(
-      actorUserId,
-      gymId,
-    );
+    const canManage = await this.perm.hasProductManagement(actorUserId, gymId);
     const inc = query.include_inactive?.trim().toLowerCase();
-    const includeInactive =
-      (inc === 'true' || inc === '1') && canManage;
+    const includeInactive = (inc === 'true' || inc === '1') && canManage;
 
     const where: Prisma.GymProductWhereInput = {
       gymId,
@@ -250,8 +246,7 @@ export class ProductsService {
       throw new NotFoundException('Product not found');
     }
 
-    const nextPrice =
-      dto.price != null ? dto.price : num(existing.price);
+    const nextPrice = dto.price != null ? dto.price : num(existing.price);
     const nextDiscount =
       dto.discount_price != null
         ? dto.discount_price

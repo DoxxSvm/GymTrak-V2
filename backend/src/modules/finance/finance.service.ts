@@ -25,8 +25,8 @@ export class FinanceService {
         _sum: { amountCents: true },
       }),
     ]);
-    const total_revenue = Math.round((rev._sum.amountCents ?? 0) / 100);
-    const total_expenses = Math.round((exp._sum.amountCents ?? 0) / 100);
+    const total_revenue = rev._sum.amountCents ?? 0;
+    const total_expenses = exp._sum.amountCents ?? 0;
     return {
       total_revenue,
       total_expenses,

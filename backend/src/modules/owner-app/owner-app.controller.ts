@@ -1,9 +1,5 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOperation,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { JwtUser } from '../auth/types/jwt-user.type';
@@ -20,9 +16,9 @@ export class OwnerAppController {
 
   @Post('user/select-role')
   @ApiOperation({
-    summary: 'Select gym_owner or trainer (onboarding)',
+    summary: 'Select role (owner app + member onboarding)',
     description:
-      'Bearer: temp signup token or access token. New owners choose `gym_owner` before `POST /gym`.',
+      '**Bearer is required** (`tempToken` after new-signup OTP, or `access_token`). Omitting it is not allowed on this route (avoids dev fallback user mismatch). `gym_owner` or `owner` → owner path, then `POST /gym` or `POST /gyms`. `trainer` → trainer path (must already be a trainer at a gym). `member` → gym-free consumer path (`session` + `user`), then `POST /onboarding/member`. **Response always includes** `access_token` and `refresh_token` (new pair).',
   })
   selectRole(@CurrentUser() user: JwtUser, @Body() dto: SelectRoleDto) {
     return this.ownerApp.selectRole(user, dto.role);

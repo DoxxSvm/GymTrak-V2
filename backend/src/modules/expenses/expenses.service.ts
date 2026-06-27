@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AuditAction,
   AuditEntityType,
@@ -26,6 +27,7 @@ import { SaasEntitlementsService } from '../saas/saas-entitlements.service';
 import type { CreateExpenseDto } from './dto/create-expense.dto';
 import type { UpdateExpenseDto } from './dto/update-expense.dto';
 import { GSTCalculate } from 'src/common/utils/gst-calculate';
+import { NOTIFICATION_EVENTS } from '../notifications/domain-events';
 
 function mapExpenseCategorySlug(
   slug?: string | null,
@@ -57,7 +59,42 @@ function resolveExpenseCategory(raw: string): ExpenseCategory | undefined {
   return mapExpenseCategorySlug(t);
 }
 
-/** Columns needed for the public expense JSON (no joins). */
+/** Nested trainer row for expense responses (aligned with GET /trainers list). */
+const expenseTrainerSelect = {
+  id: true,
+  gymId: true,
+  role: true,
+  isActive: true,
+  dateOfBirth: true,
+  gender: true,
+  joinedAt: true,
+  user: {
+    select: {
+      id: true,
+      fullName: true,
+      phone: true,
+      email: true,
+      username: true,
+      avatarUrl: true,
+    },
+  },
+  trainerProfile: {
+    select: {
+      salaryCents: true,
+      salaryPeriod: true,
+      contractStartsAt: true,
+      contractEndsAt: true,
+      experience: true,
+      address: true,
+    },
+  },
+  trainerExpertise: {
+    select: {
+      tag: { select: { name: true } },
+    },
+  },
+} as const;
+
 const expensePublicSelect = {
   id: true,
   gymId: true,
@@ -68,10 +105,15 @@ const expensePublicSelect = {
   gstPercent: true,
   amountCents: true,
   trainerGymUserId: true,
+  trainerGymUser: { select: expenseTrainerSelect },
 } as const;
 
 type ExpensePublicRow = Prisma.ExpenseGetPayload<{
   select: typeof expensePublicSelect;
+}>;
+
+type ExpenseTrainerRow = Prisma.GymUserGetPayload<{
+  select: typeof expenseTrainerSelect;
 }>;
 
 @Injectable()
@@ -81,7 +123,8 @@ export class ExpensesService {
     private readonly gymAccess: GymAccessService,
     private readonly saas: SaasEntitlementsService,
     private readonly audit: AuditService,
-  ) { }
+    private readonly events: EventEmitter2,
+  ) {}
 
   async list(
     actorUserId: string,
@@ -94,7 +137,11 @@ export class ExpensesService {
     offset: number,
     filter?: 'this_month' | 'last_month' | 'yearly',
     format?: 'simple' | 'default',
-    sortBy: 'occurredOn' | 'createdAt' | 'amountCents' | 'category' = 'occurredOn',
+    sortBy:
+      | 'occurredOn'
+      | 'createdAt'
+      | 'amountCents'
+      | 'category' = 'occurredOn',
     sortOrder: 'asc' | 'desc' = 'desc',
     year?: number,
   ) {
@@ -104,8 +151,9 @@ export class ExpensesService {
     const now = new Date();
     let effMonth: string | undefined = month;
     let effYear: number | undefined;
+    const hasDateScope = !!(filter || month || dateFrom || dateTo || year);
 
-    if (filter === 'this_month') {
+    if (filter === 'this_month' || (!hasDateScope)) {
       effMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     } else if (filter === 'last_month') {
       const cy = now.getUTCFullYear();
@@ -174,6 +222,16 @@ export class ExpensesService {
       }),
     ]);
 
+    const currentTotalCents = totalAmountCents._sum.amountCents ?? 0;
+    const percentageVsLastMonth = await this.computePercentageVsLastMonth(
+      gymId,
+      category,
+      currentTotalCents,
+      effMonth,
+      !!(dateFrom || dateTo),
+      effYear != null,
+    );
+
     const rows = items.map((e) => this.toPublicExpense(e));
 
     if (format === 'simple') {
@@ -185,8 +243,44 @@ export class ExpensesService {
       limit,
       offset,
       items: rows,
-      totalAmountCents: totalAmountCents._sum.amountCents ?? 0,
+      totalAmountCents: currentTotalCents,
+      percentageVsLastMonth,
     };
+  }
+
+  /** Month-over-month normalized % delta (bounded to [-100, 100]). */
+  private async computePercentageVsLastMonth(
+    gymId: string,
+    category: ExpenseCategory | undefined,
+    currentTotalCents: number,
+    effMonth: string | undefined,
+    hasCustomDateRange: boolean,
+    hasYearScope: boolean,
+  ): Promise<number> {
+    if (hasCustomDateRange || hasYearScope || !effMonth) {
+      return 0;
+    }
+    const [y, m] = effMonth.split('-').map(Number);
+    if (!y || !m) {
+      return 0;
+    }
+    const prevMonth = m === 1 ? 12 : m - 1;
+    const prevYear = m === 1 ? y - 1 : y;
+    const { start, endExclusive } = monthUtcRange(prevYear, prevMonth);
+    const lastAgg = await this.prisma.expense.aggregate({
+      where: {
+        gymId,
+        ...(category ? { category } : {}),
+        occurredOn: { gte: start, lt: endExclusive },
+      },
+      _sum: { amountCents: true },
+    });
+    const lastTotalCents = lastAgg._sum.amountCents ?? 0;
+    const scale = Math.max(currentTotalCents, lastTotalCents);
+    if (scale <= 0) {
+      return 0;
+    }
+    return Math.round(((currentTotalCents - lastTotalCents) / scale) * 1000) / 10;
   }
 
   async monthlySummary(
@@ -276,19 +370,28 @@ export class ExpensesService {
     const description = dto.bill_name?.trim() || null;
 
     let trainerGymUserId: string | null = null;
+    let trainerName: string | null = null;
     if (dto.trainer_id?.trim()) {
       const tr = await this.prisma.gymUser.findFirst({
         where: {
           id: dto.trainer_id.trim(),
           gymId: dto.gymId,
-          role: GymRole.TRAINER,
+          role: { in: [GymRole.TRAINER, GymRole.STAFF] },
         },
-        select: { id: true },
+        select: {
+          id: true,
+          user: { select: { fullName: true, username: true, phone: true } },
+        },
       });
       if (!tr) {
         throw new NotFoundException('Trainer not found at this gym');
       }
       trainerGymUserId = tr.id;
+      trainerName =
+        tr.user.fullName?.trim() ||
+        tr.user.username?.trim() ||
+        tr.user.phone?.trim() ||
+        null;
     }
 
     const method = dto.payment_mode
@@ -322,6 +425,18 @@ export class ExpensesService {
         category: row.category,
         method: row.method,
       },
+    });
+
+    this.events.emit(NOTIFICATION_EVENTS.EXPENSE_CREATED, {
+      gymId: dto.gymId,
+      expenseId: row.id,
+      amountCents: row.amountCents,
+      currency: 'INR',
+      category: row.category,
+      description: row.description,
+      trainerGymUserId,
+      trainerName,
+      actorUserId,
     });
 
     return this.toPublicExpense(row);
@@ -388,9 +503,7 @@ export class ExpensesService {
     }
     if (dto.gstPercent !== undefined) {
       data.gstPercent =
-        dto.gstPercent === null
-          ? null
-          : new Prisma.Decimal(dto.gstPercent);
+        dto.gstPercent === null ? null : new Prisma.Decimal(dto.gstPercent);
     }
     if (dto.trainer_id !== undefined) {
       const tid = dto.trainer_id?.trim() ?? '';
@@ -449,7 +562,46 @@ export class ExpensesService {
     return { ok: true };
   }
 
+  private serializeExpenseTrainer(row: ExpenseTrainerRow) {
+    return {
+      gymUserId: row.id,
+      userId: row.user.id,
+      fullName: row.user.fullName,
+      phone: row.user.phone,
+      email: row.user.email,
+      username: row.user.username,
+      avatarUrl: row.user.avatarUrl,
+      gymId: row.gymId,
+      role: row.role,
+      isActive: row.isActive,
+      dateOfBirth: row.dateOfBirth
+        ? row.dateOfBirth.toISOString().slice(0, 10)
+        : null,
+      gender: row.gender,
+      joinedAt: row.joinedAt,
+      expertise: row.trainerExpertise.map((e) => e.tag.name),
+      salary: row.trainerProfile
+        ? {
+            salaryCents: row.trainerProfile.salaryCents,
+            salaryPeriod: row.trainerProfile.salaryPeriod,
+            contractStartsAt: row.trainerProfile.contractStartsAt
+              ? row.trainerProfile.contractStartsAt.toISOString().slice(0, 10)
+              : null,
+            contractEndsAt: row.trainerProfile.contractEndsAt
+              ? row.trainerProfile.contractEndsAt.toISOString().slice(0, 10)
+              : null,
+            experience: row.trainerProfile.experience,
+            address: row.trainerProfile.address,
+          }
+        : null,
+    };
+  }
+
   private toPublicExpense(row: ExpensePublicRow) {
+    const trainer =
+      row.trainerGymUser != null
+        ? this.serializeExpenseTrainer(row.trainerGymUser)
+        : null;
     return {
       id: row.id,
       gymId: row.gymId,
@@ -457,8 +609,8 @@ export class ExpensesService {
       category: row.category,
       date: row.occurredOn.toISOString().slice(0, 10),
       trainer_id: row.trainerGymUserId,
-      payment_mode:
-        row.method != null ? paymentMethodToApi(row.method) : null,
+      trainer,
+      payment_mode: row.method != null ? paymentMethodToApi(row.method) : null,
       gst: row.gstPercent != null ? Number(row.gstPercent) : null,
       amount: row.amountCents,
     };

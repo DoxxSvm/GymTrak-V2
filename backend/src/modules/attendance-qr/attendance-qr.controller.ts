@@ -51,10 +51,7 @@ export class AttendanceQrController {
     description:
       'Bearer required. Allows logged-in member/trainer/staff to punch themselves using any valid gym QR token (including owner QR) from the same gym.',
   })
-  punchMe(
-    @CurrentUser() user: JwtUser,
-    @Body() body: AttendanceCheckInDto,
-  ) {
+  punchMe(@CurrentUser() user: JwtUser, @Body() body: AttendanceCheckInDto) {
     return this.attendanceQr.punchLoggedInUserWithToken(
       user.sub,
       body.token.trim(),

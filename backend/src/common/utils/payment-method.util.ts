@@ -26,3 +26,18 @@ export function paymentMethodToApi(
   }
   return method.toLowerCase();
 }
+
+/** Member detail / payment history UI label (`Cash`, `UPI`, `Card`). */
+export function paymentMethodDisplayLabel(
+  method: PaymentMethod | null | undefined,
+): string {
+  switch (method) {
+    case PaymentMethod.UPI:
+      return 'UPI';
+    case PaymentMethod.CARD:
+      return 'Card';
+    case PaymentMethod.CASH:
+    default:
+      return 'Cash';
+  }
+}

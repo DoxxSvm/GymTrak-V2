@@ -6,12 +6,18 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import {
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { AuthService } from './auth.service';
 import { LogoutDto } from './dto/logout.dto';
 import { AuthLoginBodyDto } from './dto/auth-login-body.dto';
+import { Msg91TestSendDto } from './dto/msg91-test-send.dto';
 import { MobileSendOtpDto } from './dto/mobile-send-otp.dto';
 import { MobileVerifyOtpDto } from './dto/mobile-verify-otp.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -20,6 +26,7 @@ import { StaffLoginDto } from './dto/staff-login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import type { JwtUser } from './types/jwt-user.type';
 
+@ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
@@ -86,6 +93,39 @@ export class AuthController {
     throw new BadRequestException(
       'Provide phone (and optional country_code) or username and password',
     );
+  }
+
+  /** MSG91 configuration diagnostics (no SMS sent). */
+  @Public()
+  @Get('msg91/status')
+  @ApiOperation({ summary: 'MSG91 OTP configuration status' })
+  @ApiOkResponse({ description: 'MSG91 env checklist and warnings' })
+  msg91Status() {
+    return this.auth.getMsg91Status();
+  }
+
+  /** Send a live test OTP via MSG91 and return request_id + warnings. */
+  @Public()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @Post('msg91/test-send')
+  @ApiOperation({
+    summary: 'Send test OTP via MSG91',
+    description:
+      'Triggers a real MSG91 OTP for debugging. Check `warnings` in the response — India requires MSG91_TEMPLATE_ID (DLT-approved template).',
+  })
+  msg91TestSend(@Body() dto: Msg91TestSendDto) {
+    return this.auth.testMsg91Send(dto.phone, dto.country_code);
+  }
+
+  /** Retry OTP via MSG91 voice call (after test-send or login OTP). */
+  @Public()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @Post('msg91/retry-voice')
+  @ApiOperation({ summary: 'MSG91 voice OTP retry' })
+  msg91RetryVoice(@Body() dto: Msg91TestSendDto) {
+    return this.auth.retryMsg91Voice(dto.phone, dto.country_code);
   }
 
   @Post('logout')

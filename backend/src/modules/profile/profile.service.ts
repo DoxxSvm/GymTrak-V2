@@ -182,11 +182,11 @@ export class ProfileService {
       const detail = await this.trainers.getBasicSelf(userId, gymId);
       const fn = splitFullName(detail.user.fullName);
       return {
-        role: 'trainer' as const,
         phone: detail.user.phone,
         ...detail,
-        firstName: fn.firstName,
-        lastName: fn.lastName,
+        role: 'trainer' as const,
+        firstName: fn.firstName as string,
+        lastName: fn.lastName as string,
       };
     }
 
@@ -351,7 +351,7 @@ export class ProfileService {
     if (dto.salaryCents !== undefined) {
       salaryCents = dto.salaryCents;
     } else if (dto.salary !== undefined) {
-      salaryCents = Math.round(dto.salary * 100);
+      salaryCents = Math.round(dto.salary);
     }
 
     await this.trainers.updateSelf(userId, gymId, {
@@ -446,8 +446,11 @@ export class ProfileService {
         avatarUrl: true,
         createdAt: true,
         updatedAt: true,
+        phone: true,
+        email: true,
       },
     });
+
     if (!userBase) {
       throw new NotFoundException('User not found');
     }
@@ -461,6 +464,8 @@ export class ProfileService {
           firstName: fn.firstName,
           lastName: fn.lastName,
           fullName: userBase.fullName ?? '',
+          phone: userBase.phone ?? '',
+          email: userBase.email ?? '',
           profileImage: userBase.avatarUrl,
           dateOfBirth: null,
           gender: null,
@@ -506,7 +511,7 @@ export class ProfileService {
         ? genderRaw
         : null;
     const salaryMajor =
-      p?.salaryCents != null ? Math.round(p.salaryCents / 100) : null;
+      p?.salaryCents != null ? p.salaryCents : null;
 
     const data: UnifiedProfileData = {
       id: userId,
@@ -514,6 +519,8 @@ export class ProfileService {
       personalInfo: {
         firstName: fn.firstName,
         lastName: fn.lastName,
+        phone: userBase.phone ?? '',
+        email: userBase.email ?? '',
         fullName: detail.user.fullName ?? '',
         profileImage: detail.user.avatarUrl,
         dateOfBirth: dobStr,

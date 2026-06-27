@@ -12,11 +12,16 @@ import { isObservable, lastValueFrom } from 'rxjs';
 import type { JwtUser } from '../../modules/auth/types/jwt-user.type';
 import { PrismaService } from '../../modules/prisma/prisma.service';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { REQUIRE_BEARER_AUTH_KEY } from '../decorators/require-bearer-auth.decorator';
 
 /**
  * Global auth: non-{@link Public} routes need a valid JWT in `Authorization: Bearer …`,
- * except owner signup/onboarding POSTs ({@link isSignupFlowPost}) which infer user from
- * `AUTH_DEV_USER_ID` or the first ACTIVE user. See also {@link isJwtAuthDisabled}.
+ * except some owner signup POSTs ({@link isSignupFlowPost}) which may infer user from
+ * `AUTH_DEV_USER_ID` or the first ACTIVE user when Bearer is omitted.
+ * Routes marked {@link RequireBearerAuth} always require `Authorization: Bearer …` (no dev fallback).
+ * **`POST …/user/select-role` always requires Bearer** (temp signup or access token) so
+ * `request.user` matches the JWT instead of a dev fallback user.
+ * See also {@link isJwtAuthDisabled}.
  */
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
@@ -39,13 +44,30 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       return true;
     }
 
+    const requireBearerAuth = this.reflector.getAllAndOverride<boolean>(
+      REQUIRE_BEARER_AUTH_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+
     const request = context.switchToHttp().getRequest<Request>();
     const authHeader = request.headers?.authorization;
     const hasBearer =
       typeof authHeader === 'string' && /^Bearer\s+\S+/i.test(authHeader);
 
+    if (this.isPostOwnerAppSelectRole(request) && !hasBearer) {
+      throw new UnauthorizedException(
+        'Authorization: Bearer <tempToken|access_token> is required for POST /user/select-role.',
+      );
+    }
+
     if (hasBearer) {
       return this.runJwtValidation(context);
+    }
+
+    if (requireBearerAuth) {
+      throw new UnauthorizedException(
+        'Authorization: Bearer <access_token> is required.',
+      );
     }
 
     /** Owner signup/onboarding: no Bearer; user from AUTH_DEV_USER_ID or first ACTIVE user. */
@@ -94,7 +116,16 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     return /\/gyms\/?$/.test(path);
   }
 
-  /** Owner app signup: select role, set gym, or create gym — no JWT required. */
+  /** `POST …/user/select-role` (global prefix may prepend `/api/v1`). */
+  private isPostOwnerAppSelectRole(req: Request): boolean {
+    if (req.method !== 'POST') {
+      return false;
+    }
+    const path = (req.originalUrl || req.url || '').split('?')[0];
+    return /\/user\/select-role\/?$/.test(path);
+  }
+
+  /** Owner app signup: select role, set gym, or create gym — temp JWT only on these paths; see guard body for Bearer rules. */
   private isSignupFlowPost(req: Request): boolean {
     if (req.method !== 'POST') {
       return false;

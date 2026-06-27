@@ -1,9 +1,18 @@
-import { IsOptional, IsString } from 'class-validator';
-import { GymIdQueryDto } from '../../../common/dto/gym-id-query.dto';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsIn, IsOptional } from 'class-validator';
+import { OptionalGymIdQueryDto } from '../../../common/dto/optional-gym-id-query.dto';
 
-/** List member workouts in a gym; omit `member_id` to list all members’ workouts. */
-export class ListTrainerWorkoutsQueryDto extends GymIdQueryDto {
+/**
+ * Optional `gymId`: workouts for `user_id` = JWT subject in that gym.
+ * Omit `gymId`: personal workouts (`gym_id` null) for that user.
+ */
+export class ListTrainerWorkoutsQueryDto extends OptionalGymIdQueryDto {
+  @ApiPropertyOptional({
+    enum: ['all', 'member', 'trainer'],
+    description:
+      '`member` = logged by MEMBER; `trainer` = OWNER, TRAINER, or STAFF; `all` = no filter.',
+  })
   @IsOptional()
-  @IsString()
-  member_id?: string;
+  @IsIn(['all', 'member', 'trainer'])
+  created_by?: 'all' | 'member' | 'trainer';
 }

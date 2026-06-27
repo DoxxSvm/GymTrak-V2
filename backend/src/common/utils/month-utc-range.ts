@@ -21,7 +21,10 @@ export function utcDateRangeInclusive(
 }
 
 /** UTC calendar year: Jan 1 00:00 through Dec 31 (end exclusive = Jan 1 next year). */
-export function yearUtcRange(year: number): { start: Date; endExclusive: Date } {
+export function yearUtcRange(year: number): {
+  start: Date;
+  endExclusive: Date;
+} {
   const start = new Date(Date.UTC(year, 0, 1));
   const endExclusive = new Date(Date.UTC(year + 1, 0, 1));
   return { start, endExclusive };

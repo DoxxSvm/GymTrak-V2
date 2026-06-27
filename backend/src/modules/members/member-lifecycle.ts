@@ -20,14 +20,15 @@ export function computeMemberLifecycleStatus(
   }
   const start = startOfUtcDay(now);
   const end = row.membershipEndsAt;
-  if (end && end < start) {
+  if (!end) {
     return 'expired';
   }
-  if (end) {
-    const windowEnd = endOfUtcDayAfter(start, 7);
-    if (end >= start && end <= windowEnd) {
-      return 'expiring';
-    }
+  if (end < start) {
+    return 'expired';
+  }
+  const windowEnd = endOfUtcDayAfter(start, 7);
+  if (end >= start && end <= windowEnd) {
+    return 'expiring';
   }
   return 'active';
 }

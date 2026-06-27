@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { SalaryPeriod } from '@prisma/client';
+import { GymRole, SalaryPeriod } from '@prisma/client';
 import {
   IsArray,
   IsBoolean,
@@ -13,13 +13,16 @@ import {
   MaxLength,
   ValidateNested,
 } from 'class-validator';
-import { TrainerPermissionsDto } from './trainer-permissions.dto';
 import { TrainerShiftDto } from './trainer-shift.dto';
 
 export class CreateTrainerDto {
   @IsString()
   @IsNotEmpty()
   gymId: string;
+
+  @IsOptional()
+  @IsEnum(GymRole)
+  role?: GymRole;
 
   @IsString()
   @IsNotEmpty()
@@ -94,9 +97,10 @@ export class CreateTrainerDto {
   @IsString({ each: true })
   planIds?: string[];
 
-  @ValidateNested()
-  @Type(() => TrainerPermissionsDto)
-  permissions: TrainerPermissionsDto;
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  permissions?: string[];
 
   /** When true, response includes one-time `username` + `password` for `POST /auth/staff/login`. */
   @IsOptional()

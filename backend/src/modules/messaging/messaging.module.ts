@@ -5,7 +5,10 @@ import { GymAccessService } from '../../common/services/gym-access.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { MessageTemplatesController } from './message-templates.controller';
 import { MessageTemplatesService } from './message-templates.service';
+import { WhatsAppAutomationController } from './whatsapp-automation.controller';
 import { WhatsAppApiService } from './whatsapp-api.service';
+import { WhatsAppTestController } from './whatsapp-test.controller';
+import { WhatsAppTestService } from './whatsapp-test.service';
 import { NoopWhatsAppAutomationService } from './whatsapp-automation.noop.service';
 import {
   WHATSAPP_QUEUE,
@@ -44,10 +47,15 @@ const bullDisabled =
           }),
         ]),
   ],
-  controllers: [MessageTemplatesController],
+  controllers: [
+    MessageTemplatesController,
+    WhatsAppAutomationController,
+    WhatsAppTestController,
+  ],
   providers: [
     GymAccessService,
     WhatsAppApiService,
+    WhatsAppTestService,
     MessageTemplatesService,
     ...(bullDisabled
       ? [

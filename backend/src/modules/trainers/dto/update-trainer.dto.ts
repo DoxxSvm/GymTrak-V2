@@ -18,6 +18,10 @@ import { TrainerShiftDto } from './trainer-shift.dto';
 export class UpdateTrainerDto {
   @IsOptional()
   @IsString()
+  role?: string;
+
+  @IsOptional()
+  @IsString()
   fullName?: string;
 
   @IsOptional()
@@ -85,9 +89,9 @@ export class UpdateTrainerDto {
   planIds?: string[];
 
   @IsOptional()
-  @ValidateNested()
-  @Type(() => TrainerPermissionsDto)
-  permissions?: TrainerPermissionsDto;
+  // @ValidateNested()
+  // @Type(() => TrainerPermissionsDto)
+  permissions?: string[];
 
   @IsOptional()
   @IsBoolean()

@@ -1,18 +1,33 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { BatchPlanGender, GymRole, PlanType, Prisma } from '@prisma/client';
+import {
+  BatchPlanGender,
+  GymRole,
+  MemberSubscriptionStatus,
+  PlanType,
+  Prisma,
+} from '@prisma/client';
 import { PERMISSION_CODES } from '../../common/permissions/permission-codes';
 import { GymAccessService } from '../../common/services/gym-access.service';
 import { PermissionEngineService } from '../rbac/permission-engine.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import type { CreateGymPlanDto } from './dto/create-gym-plan.dto';
-import type { CreatePlanCompatDto } from './dto/create-plan-compat.dto';
+import {
+  normalizeCompatPlanType,
+  type CreatePlanCompatDto,
+} from './dto/create-plan-compat.dto';
 import type { UpdatePlanCompatDto } from './dto/update-plan-compat.dto';
 import type { UpdateGymPlanDto } from './dto/update-gym-plan.dto';
+import type { AssignMemberPlanBodyDto } from './dto/assign-member-plan.dto';
+import type {
+  FreezeMemberPlanDto,
+  UnfreezeMemberPlanDto,
+} from './dto/freeze-member-plan.dto';
 
 const planInclude = {
   shifts: { orderBy: { sortOrder: 'asc' as const } },
@@ -37,7 +52,7 @@ export class PlansService {
     private readonly gymAccess: GymAccessService,
     private readonly permissions: PermissionEngineService,
     private readonly subscriptions: SubscriptionsService,
-  ) {}
+  ) { }
 
   async list(
     actorUserId: string,
@@ -45,13 +60,15 @@ export class PlansService {
     type: PlanType | undefined,
     limit: number,
     offset: number,
+    includeInactive = false,
   ) {
     await this.gymAccess.assertCanManageGym(actorUserId, gymId);
     const where: Prisma.GymPlanWhereInput = {
       gymId,
       ...(type ? { type } : {}),
+      ...(!includeInactive ? { isActive: true } : {}),
     };
-    const [total, items] = await Promise.all([
+    const [total, items, subscriptionCount] = await Promise.all([
       this.prisma.gymPlan.count({ where }),
       this.prisma.gymPlan.findMany({
         where,
@@ -60,12 +77,27 @@ export class PlansService {
         skip: offset,
         include: planInclude,
       }),
+      this.prisma.memberSubscription.findMany({
+        where: {
+          gymUser: {
+            gymId,
+            role: GymRole.MEMBER,
+          },
+          status: MemberSubscriptionStatus.ACTIVE,
+        },
+        distinct: ['gymUserId'],
+        select: {
+          gymUserId: true,
+        },
+      })
     ]);
+
     return {
       total,
       limit,
       offset,
       items: items.map((p) => this.serializePlan(p)),
+      subscriptionCount: subscriptionCount.length,
     };
   }
 
@@ -77,7 +109,7 @@ export class PlansService {
   async getOne(actorUserId: string, gymId: string, planId: string) {
     await this.gymAccess.assertCanManageGym(actorUserId, gymId);
     const row = await this.prisma.gymPlan.findFirst({
-      where: { id: planId, gymId },
+      where: { id: planId, gymId, isActive: true },
       include: planInclude,
     });
     if (!row) {
@@ -88,7 +120,7 @@ export class PlansService {
 
   async create(actorUserId: string, gymId: string, dto: CreateGymPlanDto) {
     await this.gymAccess.assertCanManageGym(actorUserId, gymId);
-    const currency = dto.currency?.trim() || 'USD';
+    const currency = dto.currency?.trim() || 'INR';
     await this.assertTypePayload(
       gymId,
       dto.type,
@@ -121,6 +153,9 @@ export class PlansService {
     if (!existing) {
       throw new NotFoundException('Plan not found');
     }
+    if (!existing.isActive && dto.isActive !== true) {
+      throw new NotFoundException('Plan not found');
+    }
 
     const nextType = dto.type ?? existing.type;
     const trainerId =
@@ -131,10 +166,10 @@ export class PlansService {
       dto.shifts !== undefined
         ? dto.shifts
         : existing.shifts.map((s) => ({
-            startTime: s.startTime,
-            endTime: s.endTime,
-            sortOrder: s.sortOrder,
-          }));
+          startTime: s.startTime,
+          endTime: s.endTime,
+          sortOrder: s.sortOrder,
+        }));
     const days =
       dto.batchDaysOfWeek !== undefined
         ? dto.batchDaysOfWeek
@@ -166,7 +201,7 @@ export class PlansService {
           : {}),
         ...(dto.priceCents !== undefined ? { priceCents: dto.priceCents } : {}),
         ...(dto.currency !== undefined
-          ? { currency: dto.currency.trim() || 'USD' }
+          ? { currency: dto.currency.trim() || 'INR' }
           : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
         ...(dto.metadata !== undefined
@@ -179,13 +214,17 @@ export class PlansService {
       }
 
       if (
-        nextType === PlanType.PT_PLAN &&
+        (nextType === PlanType.PT_PLAN || nextType === PlanType.BATCH_PLAN) &&
         (dto.trainerGymUserId !== undefined || typeChanged)
       ) {
         if (trainerId) {
           data.trainerGymUser = { connect: { id: trainerId } };
         }
-      } else if (typeChanged && nextType !== PlanType.PT_PLAN) {
+      } else if (
+        typeChanged &&
+        nextType !== PlanType.PT_PLAN &&
+        nextType !== PlanType.BATCH_PLAN
+      ) {
         data.trainerGymUser = { disconnect: true };
       }
 
@@ -251,6 +290,28 @@ export class PlansService {
     if (!row) {
       throw new NotFoundException('Plan not found');
     }
+    if (!row.isActive) {
+      return { ok: true };
+    }
+
+    const assignedCount = await this.prisma.memberSubscription.count({
+      where: {
+        gymPlanId: planId,
+        status: {
+          in: [
+            MemberSubscriptionStatus.ACTIVE,
+            MemberSubscriptionStatus.SCHEDULED,
+            MemberSubscriptionStatus.FROZEN,
+          ],
+        },
+      },
+    });
+    if (assignedCount > 0) {
+      throw new ConflictException(
+        `Cannot delete this plan — ${assignedCount} member${assignedCount > 1 ? 's' : ''} currently ${assignedCount > 1 ? 'have' : 'has'} an active or scheduled subscription on it. Remove or change their subscriptions first.`,
+      );
+    }
+
     await this.prisma.gymPlan.update({
       where: { id: planId },
       data: { isActive: false },
@@ -337,83 +398,71 @@ export class PlansService {
 
   async assignMemberPlan(
     actorUserId: string,
-    body: {
-      member_id: string;
-      plan_id: string;
-      start_date: string;
-      discount?: number;
-    },
+    body: AssignMemberPlanBodyDto,
   ) {
-    const member = await this.prisma.gymUser.findUnique({
-      where: { id: body.member_id },
-      select: { id: true, gymId: true, role: true },
-    });
-    if (!member || member.role !== GymRole.MEMBER) {
-      throw new NotFoundException('Member not found');
-    }
-    await this.permissions.assertOwnerOrPermission(
-      actorUserId,
-      member.gymId,
-      PERMISSION_CODES.MEMBERS,
-    );
-    const plan = await this.prisma.gymPlan.findFirst({
-      where: { id: body.plan_id, gymId: member.gymId, isActive: true },
-      select: {
-        id: true,
-        durationDays: true,
-        priceCents: true,
-        currency: true,
-      },
-    });
-    if (!plan) {
-      throw new NotFoundException('Plan not found');
-    }
-    const startsAt = new Date(body.start_date);
-    if (Number.isNaN(startsAt.getTime())) {
-      throw new BadRequestException('Invalid start_date');
-    }
-    const subscriptionId = await this.subscriptions.createMemberSubscription(
-      actorUserId,
-      member.gymId,
-      member.id,
-      {
-        gymPlanId: plan.id,
-        startsAt: startsAt.toISOString(),
-        endsAt: this.addPlanDuration(startsAt, plan.durationDays).toISOString(),
-        priceCents: Math.max(0, plan.priceCents - (body.discount ?? 0)),
-        currency: plan.currency,
-      },
-    );
-
-    return { success: true as const, subscription_id: subscriptionId };
+    return this.subscriptions.assignGymPlanToMember(actorUserId, body);
   }
 
-  validateCompatPayload(dto: {
-    plan_type: string;
-    trainer_id?: string;
-    batch_details?: {
-      working_days?: string[];
-      start_time?: string;
-      end_time?: string;
-      gender?: string;
-    };
-  }) {
+  async freezeMemberPlan(actorUserId: string, body: FreezeMemberPlanDto) {
+    return this.subscriptions.freeze(
+      actorUserId,
+      body.gymId,
+      body.member_subscription_id,
+      {
+        freeze_start_date: body.freeze_start_date,
+        duration_days: body.duration_days,
+        freeze_fee: body.freeze_fee,
+        reason: body.reason,
+      },
+    );
+  }
+
+  async unfreezeMemberPlan(actorUserId: string, body: UnfreezeMemberPlanDto) {
+    return this.subscriptions.unfreeze(
+      actorUserId,
+      body.gymId,
+      body.member_subscription_id,
+    );
+  }
+
+  validateCompatPayload(body: object) {
+    const rec = body as Record<string, unknown>;
+    const planType = normalizeCompatPlanType(rec.planType ?? rec.plan_type);
     const missing: string[] = [];
-    if (dto.plan_type === 'pt' && !dto.trainer_id) {
-      missing.push('trainer_id');
+    if (!planType) {
+      missing.push('planType');
     }
-    if (dto.plan_type === 'batch') {
-      if (!dto.trainer_id) {
-        missing.push('trainer_id');
+    const trainerRaw = rec.trainerId ?? rec.trainer_id;
+    const trainerId =
+      typeof trainerRaw === 'string' ? trainerRaw.trim() : undefined;
+
+    if (planType === PlanType.PT_PLAN && !trainerId) {
+      missing.push('trainerId');
+    }
+    if (planType === PlanType.BATCH_PLAN) {
+      if (!trainerId) {
+        missing.push('trainerId');
       }
-      if (!dto.batch_details?.working_days?.length) {
+      const bd = rec.batch_details as Record<string, unknown> | undefined;
+      if (
+        !bd ||
+        !Array.isArray(bd.working_days) ||
+        bd.working_days.length === 0
+      ) {
         missing.push('batch_details.working_days');
       }
-      if (!dto.batch_details?.start_time) {
-        missing.push('batch_details.start_time');
+      const shifts = bd?.shifts;
+      const hasShifts = Array.isArray(shifts) && shifts.length > 0;
+      const legacy =
+        typeof bd?.start_time === 'string' &&
+        bd.start_time.trim().length > 0 &&
+        typeof bd?.end_time === 'string' &&
+        bd.end_time.trim().length > 0;
+      if (!hasShifts && !legacy) {
+        missing.push('batch_details.shifts');
       }
-      if (!dto.batch_details?.end_time) {
-        missing.push('batch_details.end_time');
+      if (!bd?.gender || !String(bd.gender).trim()) {
+        missing.push('batch_details.gender');
       }
     }
     return { valid: missing.length === 0, missing_fields: missing };
@@ -428,8 +477,8 @@ export class PlansService {
   ): Prisma.InputJsonValue | undefined {
     const raw: Record<string, unknown> =
       dto.metadata != null &&
-      typeof dto.metadata === 'object' &&
-      !Array.isArray(dto.metadata)
+        typeof dto.metadata === 'object' &&
+        !Array.isArray(dto.metadata)
         ? { ...(dto.metadata as Record<string, unknown>) }
         : {};
     if (dto.batchStartTime != null) {
@@ -474,6 +523,13 @@ export class PlansService {
         ...base,
         batchDaysOfWeek: dto.batchDaysOfWeek!,
         batchGender: dto.batchGender!,
+        ...(dto.trainerGymUserId
+          ? {
+            trainerGymUser: {
+              connect: { id: dto.trainerGymUserId },
+            },
+          }
+          : {}),
         shifts: {
           create: dto.shifts!.map((s, i) => ({
             startTime: s.startTime,
@@ -502,7 +558,7 @@ export class PlansService {
       };
     }
     if (type === PlanType.BATCH_PLAN) {
-      return { trainerGymUser: { disconnect: true } };
+      return {};
     }
     return {
       trainerGymUser: { disconnect: true },
@@ -540,8 +596,12 @@ export class PlansService {
         throw new BadRequestException('Batch plan requires batchGender');
       }
       if (batchDaysOfWeek.some((d) => d < 0 || d > 6)) {
-        throw new BadRequestException('batchDaysOfWeek must be 0–6 (Sun–Sat)');
+        throw new BadRequestException('batchDaysOfWeek must be 0–6');
       }
+      if (!trainerGymUserId?.trim()) {
+        throw new BadRequestException('Batch plan requires trainer');
+      }
+      await this.assertTrainer(gymId, trainerGymUserId.trim());
       return;
     }
     if (trainerGymUserId) {
@@ -578,112 +638,206 @@ export class PlansService {
   }
 
   private mapCompatToCreate(dto: CreatePlanCompatDto): CreateGymPlanDto {
+    const type = dto.planType;
+    const batchDetails =
+      type === PlanType.BATCH_PLAN ? dto.batch_details : undefined;
+    const shiftRows =
+      batchDetails != null
+        ? this.resolveCompatBatchShifts(batchDetails).map((s, i) => ({
+          startTime: this.normalizeCompatTime(s.start_time),
+          endTime: this.normalizeCompatTime(s.end_time),
+          sortOrder: i,
+        }))
+        : undefined;
+
     return {
-      type: this.compatType(dto.plan_type),
-      name: dto.plan_name,
-      durationDays: dto.duration_days,
-      priceCents: dto.price * 100,
-      trainerGymUserId: dto.trainer_id,
-      shifts:
-        dto.plan_type === 'batch' && dto.batch_details
-          ? [
-              {
-                startTime: dto.batch_details.start_time,
-                endTime: dto.batch_details.end_time,
-                sortOrder: 0,
-              },
-            ]
-          : undefined,
+      type,
+      name: dto.planName.trim(),
+      durationDays: dto.durationDays,
+      priceCents: dto.price,
+      trainerGymUserId: dto.trainerId,
+      shifts: shiftRows,
       batchDaysOfWeek:
-        dto.plan_type === 'batch' && dto.batch_details
-          ? dto.batch_details.working_days.map((d) => this.dayToInt(d))
+        batchDetails != null
+          ? batchDetails.working_days.map((d) => this.mapCompatDayToken(d))
           : undefined,
       batchGender:
-        dto.plan_type === 'batch' && dto.batch_details
-          ? dto.batch_details.gender === 'unisex'
-            ? BatchPlanGender.ANY
-            : dto.batch_details.gender === 'male'
-              ? BatchPlanGender.MALE
-              : BatchPlanGender.FEMALE
+        batchDetails != null
+          ? this.mapCompatGender(String(batchDetails.gender))
           : undefined,
-      currency: 'USD',
+      currency: 'INR',
       metadata: undefined,
     };
   }
 
   private mapCompatToUpdate(dto: UpdatePlanCompatDto): UpdateGymPlanDto {
-    return {
-      type: dto.plan_type ? this.compatType(dto.plan_type) : undefined,
-      name: dto.plan_name,
-      durationDays: dto.duration_days,
-      priceCents: dto.price != null ? dto.price * 100 : undefined,
-      trainerGymUserId: dto.trainer_id,
-      shifts:
-        dto.batch_details?.start_time && dto.batch_details?.end_time
-          ? [
-              {
-                startTime: dto.batch_details.start_time,
-                endTime: dto.batch_details.end_time,
-                sortOrder: 0,
-              },
-            ]
-          : undefined,
-      batchDaysOfWeek: dto.batch_details?.working_days?.map((d) =>
-        this.dayToInt(d),
-      ),
-      batchGender:
-        dto.batch_details?.gender === undefined
-          ? undefined
-          : dto.batch_details.gender === 'unisex'
-            ? BatchPlanGender.ANY
-            : dto.batch_details.gender === 'male'
-              ? BatchPlanGender.MALE
-              : BatchPlanGender.FEMALE,
-      currency: 'USD',
-      isActive: undefined,
-      metadata: undefined,
+    const out: UpdateGymPlanDto = {};
+    if (dto.planType !== undefined) {
+      out.type = dto.planType;
+    }
+    if (dto.planName !== undefined) {
+      out.name = dto.planName.trim();
+    }
+    if (dto.durationDays !== undefined) {
+      out.durationDays = dto.durationDays;
+    }
+    if (dto.price !== undefined) {
+      out.priceCents = dto.price;
+    }
+    if (dto.trainerId !== undefined) {
+      out.trainerGymUserId = dto.trainerId;
+    }
+    if (dto.batch_details) {
+      const shifts = this.resolveCompatBatchShifts(dto.batch_details).map(
+        (s, i) => ({
+          startTime: this.normalizeCompatTime(s.start_time),
+          endTime: this.normalizeCompatTime(s.end_time),
+          sortOrder: i,
+        }),
+      );
+      out.shifts = shifts;
+      out.batchDaysOfWeek = dto.batch_details.working_days.map((d) =>
+        this.mapCompatDayToken(d),
+      );
+      out.batchGender = this.mapCompatGender(String(dto.batch_details.gender));
+    }
+    out.currency = 'INR';
+    return out;
+  }
+
+  private resolveCompatBatchShifts(batch: {
+    shifts?: { start_time: string; end_time: string }[];
+    start_time?: string;
+    end_time?: string;
+  }): { start_time: string; end_time: string }[] {
+    if (batch.shifts?.length) {
+      return batch.shifts;
+    }
+    if (batch.start_time?.trim() && batch.end_time?.trim()) {
+      return [{ start_time: batch.start_time, end_time: batch.end_time }];
+    }
+    throw new BadRequestException(
+      'batch_details requires shifts[] (start_time/end_time each) or legacy start_time and end_time',
+    );
+  }
+
+  private normalizeCompatTime(raw: string): string {
+    const s = raw.trim();
+    const ampm = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i.exec(s);
+    if (ampm) {
+      let h = parseInt(ampm[1]!, 10);
+      const m = ampm[2]!.padStart(2, '0');
+      const mer = ampm[4]!.toUpperCase();
+      if (mer === 'PM' && h !== 12) {
+        h += 12;
+      }
+      if (mer === 'AM' && h === 12) {
+        h = 0;
+      }
+      if (h > 23 || parseInt(m, 10) > 59) {
+        throw new BadRequestException(`Invalid time "${raw}"`);
+      }
+      return `${h}:${m}`;
+    }
+    const twenty = /^(\d{1,2}):(\d{2})$/.exec(s);
+    if (twenty) {
+      const h = parseInt(twenty[1]!, 10);
+      const m = twenty[2]!.padStart(2, '0');
+      if (h > 23 || parseInt(m, 10) > 59) {
+        throw new BadRequestException(`Invalid time "${raw}"`);
+      }
+      return `${h}:${m}`;
+    }
+    throw new BadRequestException(
+      `Invalid time "${raw}"; use HH:mm or h:mm AM/PM`,
+    );
+  }
+
+  /**
+   * Compat APIs accept Monday-indexed days: 0=Mon, 1=Tue, …, 6=Sun.
+   * Converts to DB format (0=Sun, 1=Mon, …, 6=Sat).
+   */
+  private mapCompatDayToken(d: string | number): number {
+    if (typeof d === 'number') {
+      if (!Number.isInteger(d) || d < 0 || d > 6) {
+        throw new BadRequestException(
+          `Invalid day index ${d}; use 0–6 (Mon–Sun)`,
+        );
+      }
+      // Monday-indexed → DB (Sunday-indexed): (input + 1) % 7
+      return (d + 1) % 7;
+    }
+    const s = String(d).trim();
+    if (/^\d+$/.test(s)) {
+      const n = parseInt(s, 10);
+      if (n < 0 || n > 6) {
+        throw new BadRequestException(
+          `Invalid day index ${n}; use 0–6 (Mon–Sun)`,
+        );
+      }
+      return (n + 1) % 7;
+    }
+    const key = s.toLowerCase();
+    const map: Record<string, number> = {
+      sun: 0,
+      sunday: 0,
+      s_sun: 0,
+      mon: 1,
+      monday: 1,
+      m: 1,
+      tue: 2,
+      tues: 2,
+      tuesday: 2,
+      t: 2,
+      wed: 3,
+      wednesday: 3,
+      w: 3,
+      thu: 4,
+      thur: 4,
+      thurs: 4,
+      thursday: 4,
+      fri: 5,
+      friday: 5,
+      f: 5,
+      sat: 6,
+      saturday: 6,
     };
-  }
-
-  private compatType(v: 'gym' | 'pt' | 'batch' | 'trial'): PlanType {
-    switch (v) {
-      case 'gym':
-        return PlanType.GYM_MEMBERSHIP;
-      case 'pt':
-        return PlanType.PT_PLAN;
-      case 'batch':
-        return PlanType.BATCH_PLAN;
-      case 'trial':
-      default:
-        return PlanType.FREE_TRIAL;
+    if (key in map) {
+      return map[key]!;
     }
+    throw new BadRequestException(`Invalid working day "${d}"`);
   }
 
-  private dayToInt(d: string): number {
-    switch (d.toLowerCase()) {
-      case 'sun':
-        return 0;
-      case 'mon':
-        return 1;
-      case 'tue':
-        return 2;
-      case 'wed':
-        return 3;
-      case 'thu':
-        return 4;
-      case 'fri':
-        return 5;
-      case 'sat':
-        return 6;
-      default:
-        return 1;
+  private mapCompatGender(raw: string): BatchPlanGender {
+    const g = raw.trim().toLowerCase();
+    if (g === 'male' || g === 'm') {
+      return BatchPlanGender.MALE;
     }
-  }
-
-  private addPlanDuration(startsAt: Date, durationDays: number): Date {
-    const endsAt = new Date(startsAt);
-    endsAt.setUTCDate(endsAt.getUTCDate() + durationDays);
-    return endsAt;
+    if (g === 'female' || g === 'f') {
+      return BatchPlanGender.FEMALE;
+    }
+    if (g === 'unisex' || g === 'any') {
+      return BatchPlanGender.ANY;
+    }
+    if (g === 'mixed') {
+      return BatchPlanGender.MIXED;
+    }
+    const upper = raw.trim().toUpperCase();
+    if (upper === 'MALE') {
+      return BatchPlanGender.MALE;
+    }
+    if (upper === 'FEMALE') {
+      return BatchPlanGender.FEMALE;
+    }
+    if (upper === 'ANY' || upper === 'UNISEX') {
+      return BatchPlanGender.ANY;
+    }
+    if (upper === 'MIXED') {
+      return BatchPlanGender.MIXED;
+    }
+    throw new BadRequestException(
+      `Invalid batch gender "${raw}"; use male, female, unisex, or mixed`,
+    );
   }
 
   private serializePlan(row: GymPlanRow) {
@@ -699,24 +853,26 @@ export class PlansService {
       metadata: row.metadata,
       trainer: row.trainerGymUser
         ? {
-            gymUserId: row.trainerGymUser.id,
-            name: row.trainerGymUser.user.fullName,
-            phone: row.trainerGymUser.user.phone,
-            userId: row.trainerGymUser.user.id,
-          }
+          gymUserId: row.trainerGymUser.id,
+          name: row.trainerGymUser.user.fullName,
+          phone: row.trainerGymUser.user.phone,
+          userId: row.trainerGymUser.user.id,
+        }
         : null,
       batch:
         row.type === PlanType.BATCH_PLAN
           ? {
-              daysOfWeek: row.batchDaysOfWeek,
-              gender: row.batchGender,
-              shifts: row.shifts.map((s) => ({
-                id: s.id,
-                startTime: s.startTime,
-                endTime: s.endTime,
-                sortOrder: s.sortOrder,
-              })),
-            }
+            daysOfWeek: row.batchDaysOfWeek.map(
+              (d) => (d + 6) % 7,
+            ),
+            gender: row.batchGender,
+            shifts: row.shifts.map((s) => ({
+              id: s.id,
+              startTime: s.startTime,
+              endTime: s.endTime,
+              sortOrder: s.sortOrder,
+            })),
+          }
           : null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,

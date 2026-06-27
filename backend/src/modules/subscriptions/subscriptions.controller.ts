@@ -26,12 +26,12 @@ import { SubscriptionsService } from './subscriptions.service';
 import { CreateSubscriptionCompatDto } from './dto/create-subscription-compat.dto';
 
 @Controller('subscriptions')
-@UseGuards(PermissionsGuard)
+// @UseGuards(PermissionsGuard)
 export class SubscriptionsController {
   constructor(private readonly subscriptions: SubscriptionsService) {}
 
   @Get()
-  @RequirePermissions(PERMISSION_CODES.MEMBERS)
+  // @RequirePermissions(PERMISSION_CODES.MEMBERS)
   list(@CurrentUser() user: JwtUser, @Query() query: SubscriptionListQueryDto) {
     const limit = query.limit ?? 20;
     const offset = query.offset ?? 0;
@@ -46,7 +46,7 @@ export class SubscriptionsController {
   }
 
   @Get(':subscriptionId')
-  @RequirePermissions(PERMISSION_CODES.MEMBERS)
+  // @RequirePermissions(PERMISSION_CODES.MEMBERS)
   getOne(
     @CurrentUser() user: JwtUser,
     @Param('subscriptionId') subscriptionId: string,
@@ -65,7 +65,7 @@ export class SubscriptionsController {
   }
 
   @Post(':subscriptionId/renew')
-  @RequirePermissions(PERMISSION_CODES.MEMBERS)
+  // @RequirePermissions(PERMISSION_CODES.MEMBERS)
   renew(
     @CurrentUser() user: JwtUser,
     @Param('subscriptionId') subscriptionId: string,
@@ -81,7 +81,7 @@ export class SubscriptionsController {
   }
 
   @Post(':subscriptionId/extend')
-  @RequirePermissions(PERMISSION_CODES.MEMBERS)
+  // @RequirePermissions(PERMISSION_CODES.MEMBERS)
   extend(
     @CurrentUser() user: JwtUser,
     @Param('subscriptionId') subscriptionId: string,
@@ -97,7 +97,7 @@ export class SubscriptionsController {
   }
 
   @Post(':subscriptionId/upgrade')
-  @RequirePermissions(PERMISSION_CODES.MEMBERS)
+  // @RequirePermissions(PERMISSION_CODES.MEMBERS)
   upgrade(
     @CurrentUser() user: JwtUser,
     @Param('subscriptionId') subscriptionId: string,
@@ -113,7 +113,7 @@ export class SubscriptionsController {
   }
 
   @Post(':subscriptionId/freeze')
-  @RequirePermissions(PERMISSION_CODES.MEMBERS)
+  // @RequirePermissions(PERMISSION_CODES.MEMBERS)
   freeze(
     @CurrentUser() user: JwtUser,
     @Param('subscriptionId') subscriptionId: string,
@@ -129,7 +129,7 @@ export class SubscriptionsController {
   }
 
   @Post(':subscriptionId/unfreeze')
-  @RequirePermissions(PERMISSION_CODES.MEMBERS)
+  // @RequirePermissions(PERMISSION_CODES.MEMBERS)
   unfreeze(
     @CurrentUser() user: JwtUser,
     @Param('subscriptionId') subscriptionId: string,
@@ -139,7 +139,7 @@ export class SubscriptionsController {
   }
 
   @Post(':subscriptionId/cancel')
-  @RequirePermissions(PERMISSION_CODES.MEMBERS)
+  // @RequirePermissions(PERMISSION_CODES.MEMBERS)
   cancel(
     @CurrentUser() user: JwtUser,
     @Param('subscriptionId') subscriptionId: string,

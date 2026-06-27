@@ -4,8 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EnquiryStatus, Prisma } from '@prisma/client';
 import { GymAccessService } from '../../common/services/gym-access.service';
+import { NOTIFICATION_EVENTS } from '../notifications/domain-events';
 import { PrismaService } from '../prisma/prisma.service';
 import { MembersService } from '../members/members.service';
 import { SaasEntitlementsService } from '../saas/saas-entitlements.service';
@@ -20,6 +22,7 @@ export class EnquiriesService {
     private readonly gymAccess: GymAccessService,
     private readonly members: MembersService,
     private readonly saas: SaasEntitlementsService,
+    private readonly events: EventEmitter2,
   ) {}
 
   async list(
@@ -144,6 +147,13 @@ export class EnquiriesService {
           select: { id: true },
         },
       },
+    });
+
+    this.events.emit(NOTIFICATION_EVENTS.ENQUIRY_CREATED, {
+      gymId: row.gymId,
+      enquiryId: row.id,
+      leadName: row.name,
+      actorUserId,
     });
 
     return this.serialize(row);
@@ -301,6 +311,13 @@ export class EnquiriesService {
     const email =
       dto.emailOverride?.trim() ?? enquiry.email?.trim() ?? undefined;
 
+    const photoUrlResolved =
+      dto.photoUrlOverride !== undefined
+        ? this.cleanOptionalString(dto.photoUrlOverride)
+        : enquiry.photoUrl?.trim()
+          ? enquiry.photoUrl.trim()
+          : null;
+
     const member = await this.members.create(actorUserId, {
       gymId,
       phone,
@@ -312,7 +329,9 @@ export class EnquiriesService {
       notes: dto.notes ?? enquiry.notes ?? undefined,
       gender: dto.gender ?? enquiry.gender ?? undefined,
       address: dto.address ?? enquiry.address ?? undefined,
+      ...(dto.aadhaar_number ? { aadhaar_number: dto.aadhaar_number } : {}),
       initialSubscription: dto.initialSubscription,
+      ...(photoUrlResolved ? { avatarUrl: photoUrlResolved } : {}),
     });
 
     const [firstName, lastName] = this.resolveNameParts(fullName, null, null);
@@ -327,7 +346,16 @@ export class EnquiriesService {
         firstName,
         lastName,
         ...(email !== undefined ? { email } : {}),
+        photoUrl: photoUrlResolved,
       },
+    });
+
+    this.events.emit(NOTIFICATION_EVENTS.ENQUIRY_CONVERTED, {
+      gymId,
+      enquiryId,
+      memberGymUserId: member.gymUserId,
+      memberName: fullName,
+      actorUserId,
     });
 
     return {

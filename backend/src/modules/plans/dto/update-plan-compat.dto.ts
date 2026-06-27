@@ -1,62 +1,54 @@
+import { PlanType } from '@prisma/client';
+import { Transform, Type } from 'class-transformer';
 import {
-  IsArray,
-  IsIn,
+  IsEnum,
   IsInt,
+  IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   Min,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-
-class BatchDetailsDto {
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  working_days?: string[];
-
-  @IsOptional()
-  @IsString()
-  start_time?: string;
-
-  @IsOptional()
-  @IsString()
-  end_time?: string;
-
-  @IsOptional()
-  @IsString()
-  @IsIn(['male', 'female', 'unisex'])
-  gender?: 'male' | 'female' | 'unisex';
-}
+import {
+  BatchDetailsCompatDto,
+  normalizeCompatPlanType,
+} from './create-plan-compat.dto';
 
 export class UpdatePlanCompatDto {
   @IsOptional()
-  @IsString()
-  @IsIn(['gym', 'pt', 'batch', 'trial'])
-  plan_type?: 'gym' | 'pt' | 'batch' | 'trial';
+  @Transform(({ obj }) =>
+    normalizeCompatPlanType(obj.planType ?? obj.plan_type),
+  )
+  @IsEnum(PlanType)
+  planType?: PlanType;
 
   @IsOptional()
+  @Transform(({ obj }) => obj.planName ?? obj.plan_name)
   @IsString()
-  plan_name?: string;
+  @IsNotEmpty()
+  planName?: string;
 
   @IsOptional()
+  @Transform(({ obj }) => obj.durationDays ?? obj.duration_days)
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  duration_days?: number;
+  durationDays?: number;
 
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   price?: number;
 
   @IsOptional()
+  @Transform(({ obj }) => obj.trainerId ?? obj.trainer_id)
   @IsString()
-  trainer_id?: string;
+  trainerId?: string;
 
   @IsOptional()
   @ValidateNested()
-  @Type(() => BatchDetailsDto)
-  batch_details?: BatchDetailsDto;
+  @Type(() => BatchDetailsCompatDto)
+  batch_details?: BatchDetailsCompatDto;
 }

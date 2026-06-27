@@ -229,7 +229,7 @@ export class AdminService implements OnModuleDestroy {
               select: { currency: true },
               orderBy: { createdAt: 'desc' },
             })
-          )?.currency ?? 'USD',
+          )?.currency ?? 'INR',
       },
     };
   }

@@ -1,6 +1,7 @@
 import { PaymentMethod, PaymentStatus } from '@prisma/client';
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -9,6 +10,10 @@ import {
 } from 'class-validator';
 
 export class ReceivePaymentDto {
+  @IsOptional()
+  @IsIn(['extend_plan', 'receive_payment'])
+  type?: 'extend_plan' | 'receive_payment';
+
   @IsInt()
   @Min(1)
   amountCents: number;

@@ -112,6 +112,11 @@ export function logStartupSummary(
     `  Listening       : 0.0.0.0:${listenPort}`,
     `  Health URL      : ${apiBase}/api/v1/health`,
     `  Swagger UI      : ${apiBase}/api/v1/docs`,
+    ...(process.platform === 'win32'
+      ? [
+          `  Swagger (IPv4)  : http://127.0.0.1:${listenPort}/api/v1/docs  (use if localhost shows another app)`,
+        ]
+      : []),
     `  OpenAPI JSON    : ${apiBase}/api/v1/docs/json`,
     `  Postman JSON    : ${apiBase}/api/v1/reference/postman-collection.json`,
     `  Global prefix   : /api/v1`,

@@ -1,12 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DietMealType } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -19,10 +20,14 @@ import {
 import { DietMealFoodItemDto } from './diet-meal-food-item.dto';
 
 export class CreateDietMealDto {
-  @ApiProperty({ description: 'Member GymUser id' })
+  @ApiPropertyOptional({
+    description:
+      'Target member’s GymUser id when staff creates for someone else. Omit for **your own** meal (JWT `sub`): optional `gymId` query / JWT gym / sole member gym → gym-scoped; otherwise user-scoped personal meal (`gymId` null).',
+  })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value == null ? undefined : value))
   @IsString()
-  @IsNotEmpty()
-  member_id: string;
+  member_id?: string;
 
   @ApiProperty({ example: 'Post-Workout meal' })
   @IsString()
@@ -40,7 +45,19 @@ export class CreateDietMealDto {
   @IsEnum(DietMealType)
   meal_type: DietMealType;
 
-  @ApiPropertyOptional({ description: 'When true, meal repeats on `repeat_days`' })
+  @ApiPropertyOptional({
+    enum: ['trainer', 'member'],
+    example: 'trainer',
+    description:
+      'Who created this meal: `trainer` (OWNER/TRAINER/STAFF) or `member`. Omit to use the JWT actor’s resolved gym role.',
+  })
+  @IsOptional()
+  @IsIn(['trainer', 'member'])
+  created_by?: 'trainer' | 'member';
+
+  @ApiPropertyOptional({
+    description: 'When true, meal repeats on `repeat_days`',
+  })
   @IsOptional()
   @IsBoolean()
   repeat_enabled?: boolean;

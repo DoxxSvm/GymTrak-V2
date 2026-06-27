@@ -10,8 +10,7 @@ export function getGymIdFromRequest(req: Request): string {
       : Array.isArray(raw)
         ? raw[0]?.trim()
         : '';
-  const q =
-    req.query['gymId'] ?? req.query['gym_id'];
+  const q = req.query['gymId'] ?? req.query['gym_id'];
   const qs = typeof q === 'string' ? q : Array.isArray(q) ? q[0] : undefined;
   const body = req.body as { gymId?: string; gym_id?: string } | undefined;
   const b = body?.gymId ?? body?.gym_id;

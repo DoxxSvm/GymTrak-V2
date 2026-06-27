@@ -30,4 +30,24 @@ export class NoopWhatsAppAutomationService {
     void memberUserId;
     void memberSubscriptionId;
   }
+
+  async enqueueExpiryReminder3d(
+    gymId: string,
+    memberUserId: string,
+    memberSubscriptionId?: string,
+  ): Promise<void> {
+    void gymId;
+    void memberUserId;
+    void memberSubscriptionId;
+  }
+
+  async enqueuePostExpiryReminder(
+    gymId: string,
+    memberUserId: string,
+    memberSubscriptionId?: string,
+  ): Promise<void> {
+    void gymId;
+    void memberUserId;
+    void memberSubscriptionId;
+  }
 }

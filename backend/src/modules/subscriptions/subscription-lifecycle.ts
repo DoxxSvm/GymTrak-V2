@@ -52,3 +52,48 @@ export function initialStatusFromWindow(
   }
   return MemberSubscriptionStatus.ACTIVE;
 }
+
+/** API / aggregation bucket (inclusive end: still CURRENT when `now === endsAt`). */
+export enum SubscriptionWindowStatus {
+  CURRENT = 'CURRENT',
+  UPCOMING = 'UPCOMING',
+  EXPIRED = 'EXPIRED',
+}
+
+export function getSubscriptionWindowStatus(
+  startsAt: Date,
+  endsAt: Date,
+  now: Date,
+): SubscriptionWindowStatus {
+  const t = now.getTime();
+  const st = startsAt.getTime();
+  const en = endsAt.getTime();
+  if (t >= st && t <= en) {
+    return SubscriptionWindowStatus.CURRENT;
+  }
+  if (st > t) {
+    return SubscriptionWindowStatus.UPCOMING;
+  }
+  return SubscriptionWindowStatus.EXPIRED;
+}
+
+/**
+ * Buckets for member profile lists. `ENDED` is always **expired** in the UI (renew/upgrade history),
+ * even if dates were adjusted oddly — avoids missing rows in `expired_subscriptions`. `CANCELED` → omit.
+ * `FROZEN` → omit here (shown only in `freeze_subscriptions` on member detail, not `current_subscriptions`).
+ */
+export function getMemberSubscriptionUiBucket(
+  row: { startsAt: Date; endsAt: Date; status: MemberSubscriptionStatus },
+  now: Date,
+): SubscriptionWindowStatus | null {
+  if (row.status === MemberSubscriptionStatus.CANCELED) {
+    return null;
+  }
+  if (row.status === MemberSubscriptionStatus.FROZEN) {
+    return null;
+  }
+  if (row.status === MemberSubscriptionStatus.ENDED) {
+    return SubscriptionWindowStatus.EXPIRED;
+  }
+  return getSubscriptionWindowStatus(row.startsAt, row.endsAt, now);
+}

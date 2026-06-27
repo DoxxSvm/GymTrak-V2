@@ -3,11 +3,11 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
 import type { SignOptions } from 'jsonwebtoken';
 import { PassportModule } from '@nestjs/passport';
-import { MessagingModule } from '../messaging/messaging.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { Msg91OtpService } from './msg91-otp.service';
 import { OtpService } from './otp.service';
 import { SessionService } from './session.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
@@ -15,7 +15,6 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 @Module({
   imports: [
     PrismaModule,
-    MessagingModule,
     RbacModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
@@ -30,7 +29,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, OtpService, SessionService, JwtStrategy],
+  providers: [AuthService, Msg91OtpService, OtpService, SessionService, JwtStrategy],
   exports: [AuthService, SessionService],
 })
 export class AuthModule {}

@@ -1,0 +1,30 @@
+{
+  "info": {
+    "name": "Member Detail Module APIs",
+    "_postman_id": "a3aadcf5-83d4-430f-baf6-82f98872d151",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api/v1" },
+    { "key": "token", "value": "" },
+    { "key": "gymId", "value": "" },
+    { "key": "memberId", "value": "" },
+    { "key": "subscriptionId", "value": "" }
+  ],
+  "item": [
+    { "name": "Member Profile", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }], "url": "{{baseUrl}}/members/{{memberId}}/profile?gymId={{gymId}}" } },
+    { "name": "Receive Payment", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"member_id\": \"{{memberId}}\",\n  \"subscription_id\": \"{{subscriptionId}}\",\n  \"amount\": 1500,\n  \"payment_mode\": \"cash\"\n}" }, "url": "{{baseUrl}}/payments" } },
+    { "name": "Member Payments", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }], "url": "{{baseUrl}}/members/{{memberId}}/payments?gymId={{gymId}}" } },
+    { "name": "Member Subscriptions", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }], "url": "{{baseUrl}}/members/{{memberId}}/subscriptions?gymId={{gymId}}" } },
+    { "name": "Add Subscription", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"member_id\": \"{{memberId}}\",\n  \"plan_id\": \"plan_cuid\",\n  \"price\": 5000,\n  \"start_date\": \"2026-03-24T00:00:00.000Z\",\n  \"duration_months\": 12,\n  \"discount\": 0\n}" }, "url": "{{baseUrl}}/subscriptions" } },
+    { "name": "Freeze Subscription", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"freezeDays\": 7\n}" }, "url": "{{baseUrl}}/subscriptions/{{subscriptionId}}/freeze?gymId={{gymId}}" } },
+    { "name": "Extend Subscription", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"addDays\": 30\n}" }, "url": "{{baseUrl}}/subscriptions/{{subscriptionId}}/extend?gymId={{gymId}}" } },
+    { "name": "Mark Attendance", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"member_id\": \"{{memberId}}\",\n  \"date\": \"2026-03-24\",\n  \"status\": \"present\"\n}" }, "url": "{{baseUrl}}/attendance" } },
+    { "name": "Member Attendance", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }], "url": "{{baseUrl}}/members/{{memberId}}/attendance?gymId={{gymId}}" } },
+    { "name": "Get Workouts", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }], "url": "{{baseUrl}}/members/{{memberId}}/workouts?gymId={{gymId}}" } },
+    { "name": "Add Workout", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"member_id\": \"{{memberId}}\",\n  \"title\": \"Upper Body Strength\",\n  \"description\": \"Compound lifts\",\n  \"trainer_name\": \"Rahul\"\n}" }, "url": "{{baseUrl}}/members/workouts" } },
+    { "name": "Get Diet", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }], "url": "{{baseUrl}}/members/{{memberId}}/diet?gymId={{gymId}}" } },
+    { "name": "Add Diet", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"member_id\": \"{{memberId}}\",\n  \"meal_type\": \"breakfast\",\n  \"items\": [{\"name\": \"Grilled Breast\", \"calories\": 180}]\n}" }, "url": "{{baseUrl}}/members/diet" } },
+    { "name": "Payment Summary", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }], "url": "{{baseUrl}}/members/{{memberId}}/payment-summary?gymId={{gymId}}" } }
+  ]
+}

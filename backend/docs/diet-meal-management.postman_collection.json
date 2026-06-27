@@ -1,0 +1,107 @@
+{
+  "info": {
+    "name": "Diet & Meal Management APIs",
+    "_postman_id": "e8631e9e-9f31-4728-a4cc-b9f35fe4da2f",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api/v1" },
+    { "key": "token", "value": "" },
+    { "key": "memberId", "value": "" },
+    { "key": "mealId", "value": "" },
+    { "key": "foodId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Create Meal",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"member_id\": \"{{memberId}}\",\n  \"meal_name\": \"Post Workout Meal\",\n  \"meal_time\": \"07:30 PM\",\n  \"meal_type\": \"breakfast\",\n  \"repeat_days\": [\"mon\", \"tue\", \"wed\"],\n  \"food_items\": [{ \"food_name\": \"Grilled Veg Breast\", \"quantity\": 150, \"calories\": 100 }]\n}"
+        },
+        "url": "{{baseUrl}}/meals"
+      }
+    },
+    {
+      "name": "Get Meals By Member",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/members/{{memberId}}/meals"
+      }
+    },
+    {
+      "name": "Get Meal Details",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/meals/{{mealId}}"
+      }
+    },
+    {
+      "name": "Add Food Item",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"food_name\": \"Oatmeal\",\n  \"quantity\": 100,\n  \"calories\": 80\n}" },
+        "url": "{{baseUrl}}/meals/{{mealId}}/foods"
+      }
+    },
+    {
+      "name": "Update Food Item",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"quantity\": 150,\n  \"calories\": 120\n}" },
+        "url": "{{baseUrl}}/foods/{{foodId}}"
+      }
+    },
+    {
+      "name": "Delete Food Item",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/foods/{{foodId}}"
+      }
+    },
+    {
+      "name": "Update Meal",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"meal_name\": \"Updated Meal\",\n  \"meal_time\": \"08:00 PM\",\n  \"meal_type\": \"dinner\",\n  \"repeat_days\": [\"mon\", \"wed\"]\n}" },
+        "url": "{{baseUrl}}/meals/{{mealId}}"
+      }
+    },
+    {
+      "name": "Delete Meal",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/meals/{{mealId}}"
+      }
+    },
+    {
+      "name": "Food Search",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/foods/search?search=oats"
+      }
+    }
+  ]
+}

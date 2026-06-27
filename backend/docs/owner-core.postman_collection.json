@@ -1,0 +1,99 @@
+{
+  "info": {
+    "name": "Gym Owner Core APIs",
+    "_postman_id": "7d3af2fd-d2f9-4d95-af95-b1b4878b1140",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api/v1" },
+    { "key": "token", "value": "" },
+    { "key": "gymId", "value": "" },
+    { "key": "memberId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Select Role",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"role\": \"gym_owner\"\n}" },
+        "url": "{{baseUrl}}/user/select-role"
+      }
+    },
+    {
+      "name": "Set Gym",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"gym_name\": \"Iron Paradise\",\n  \"owner_name\": \"Amit\"\n}"
+        },
+        "url": "{{baseUrl}}/gym"
+      }
+    },
+    {
+      "name": "Dashboard",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/dashboard?mobileView=owner&gymId={{gymId}}"
+      }
+    },
+    {
+      "name": "Members List",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/members?gymId={{gymId}}&status=active&search=rahul&page=1&limit=20"
+      }
+    },
+    {
+      "name": "Add Member",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"gymId\": \"{{gymId}}\",\n  \"first_name\": \"Rahul\",\n  \"last_name\": \"Sharma\",\n  \"phone\": \"9876543210\",\n  \"gender\": \"male\",\n  \"date_of_joining\": \"2026-03-24T00:00:00.000Z\",\n  \"address\": \"Delhi\",\n  \"dob\": \"1998-01-12\",\n  \"aadhaar_number\": \"123412341234\"\n}"
+        },
+        "url": "{{baseUrl}}/members"
+      }
+    },
+    {
+      "name": "Get Member",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/members/{{memberId}}?gymId={{gymId}}"
+      }
+    },
+    {
+      "name": "Update Member",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"fullName\": \"Rahul S\",\n  \"isActive\": true\n}" },
+        "url": "{{baseUrl}}/members/{{memberId}}?gymId={{gymId}}"
+      }
+    },
+    {
+      "name": "Delete Member (Soft)",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/members/{{memberId}}?gymId={{gymId}}"
+      }
+    }
+  ]
+}

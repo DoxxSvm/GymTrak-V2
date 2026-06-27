@@ -12,6 +12,13 @@ This is a Kotlin Multiplatform project targeting Android, iOS.
 * [/iosApp](./iosApp/iosApp) contains iOS applications. Even if you’re sharing your UI with Compose Multiplatform,
   you need this entry point for your iOS app. This is also where you should add SwiftUI code for your project.
 
+* [/backend](./backend) contains the NestJS API used by the mobile app. It lives on the `backend` git branch.
+
+### Branches
+
+- `main` — mobile app (Android/iOS)
+- `backend` — mobile app + NestJS API server
+
 ### Build and Run Android Application
 
 To build and run the development version of the Android app, use the run configuration from the run widget

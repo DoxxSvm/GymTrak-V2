@@ -1,0 +1,57 @@
+openapi: 3.0.3
+info:
+  title: Plan / Package Management APIs
+  version: 1.0.0
+servers:
+  - url: /api/v1
+paths:
+  /plans:
+    post:
+      summary: Create plan
+      tags: [Plans]
+      description: Gym owner is allowed automatically; trainer/staff need `members:manage`.
+    get:
+      summary: Get plans list
+      tags: [Plans]
+      description: Gym owner is allowed automatically; trainer/staff need `members:manage`.
+  /plans/compat:
+    post:
+      summary: Create plan with owner-app payload
+      tags: [Plans]
+      description: Gym owner is allowed automatically; trainer/staff need `members:manage`.
+  /plans/validate:
+    post:
+      summary: Validate plan payload before save
+      tags: [Plans]
+  /plans/{id}:
+    get:
+      summary: Get plan details
+      tags: [Plans]
+      description: Gym owner is allowed automatically; trainer/staff need `members:manage`.
+    patch:
+      summary: Patch plan
+      tags: [Plans]
+      description: Gym owner is allowed automatically; trainer/staff need `members:manage`.
+    put:
+      summary: Update plan
+      tags: [Plans]
+      description: Gym owner is allowed automatically; trainer/staff need `members:manage`.
+    delete:
+      summary: Soft delete plan
+      tags: [Plans]
+      description: Marks the plan inactive. Gym owner is allowed automatically; trainer/staff need `members:manage`.
+  /plans/{id}/enrolled:
+    get:
+      summary: List enrolled members for a plan
+      tags: [Plans]
+      description: Gym owner is allowed automatically; trainer/staff need `members:manage`.
+  /plans/member-plans:
+    post:
+      summary: Assign plan to member from nested plans route
+      tags: [Plans]
+      description: Compatibility endpoint. Gym owner is allowed automatically; trainer/staff need `members:manage`.
+  /member-plans:
+    post:
+      summary: Assign plan to member
+      tags: [Plans]
+      description: Compatibility endpoint. Gym owner is allowed automatically; trainer/staff need `members:manage`.

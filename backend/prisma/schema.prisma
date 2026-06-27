@@ -1,0 +1,1128 @@
+// GymTrak — high-level schema (expand per module in later iterations)
+// Multi-gym: users link to gyms via GymUser; staff permissions are per gym membership.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+/// Global platform role (JWT may carry isSuperAdmin instead of duplicating here)
+enum GlobalRole {
+  USER
+  SUPER_ADMIN
+}
+
+/// Role inside a specific gym
+enum GymRole {
+  OWNER
+  TRAINER
+  STAFF
+  MEMBER
+}
+
+enum OtpPurpose {
+  PHONE_LOGIN
+  PHONE_VERIFY
+  PASSWORD_RESET
+}
+
+enum GymStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+/// Phone signup: Owner vs Member path before onboarding is finished
+enum AppOnboardingRole {
+  OWNER
+  MEMBER
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+/// Lead pipeline (CRM-style); terminal: CONVERTED, CLOSED, LOST
+enum EnquiryStatus {
+  OPEN
+  CONTACTED
+  QUALIFIED
+  TRIAL
+  FOLLOW_UP
+  CONVERTED
+  CLOSED
+  LOST
+}
+
+/// GymTrak SaaS plan tier (per-gym subscription to the platform — revenue SKU)
+enum GymTrakSaasTier {
+  BASIC
+  PLUS
+  PREMIUM
+}
+
+enum ExpenseCategory {
+  RENT
+  UTILITIES
+  EQUIPMENT
+  MAINTENANCE
+  SUPPLIES
+  SALARY
+  MARKETING
+  SOFTWARE
+  OTHER
+}
+
+enum NotificationType {
+  INFO
+  PAYMENT
+  MEMBER
+  ENQUIRY
+  ATTENDANCE
+  /// Domain events (decoupled from legacy INFO/MEMBER/PAYMENT groupings)
+  MEMBER_ADDED
+  PAYMENT_RECEIVED
+  PLAN_ASSIGNED
+  EXPIRY_ALERT
+}
+
+enum NotificationEntityType {
+  USER
+  TRAINER
+  MEMBER
+  PAYMENT
+  ENQUIRY
+  MEMBER_SUBSCRIPTION
+}
+
+/// Per-member plan at a gym (distinct from GymSubscription / SaaS billing)
+enum MemberSubscriptionStatus {
+  SCHEDULED
+  ACTIVE
+  ENDED
+  CANCELED
+  /// Access paused; dates may still reflect extended end after unfreeze
+  FROZEN
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  VOID
+}
+
+/// How trainer compensation is quoted (salary + duration UX)
+enum SalaryPeriod {
+  HOURLY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+/// Gym-offered member / PT / batch products (per-gym catalog)
+enum PlanType {
+  GYM_MEMBERSHIP
+  PT_PLAN
+  BATCH_PLAN
+  FREE_TRIAL
+}
+
+/// Batch plan audience (optional; extend via `GymPlan.metadata` if needed)
+enum BatchPlanGender {
+  ANY
+  MALE
+  FEMALE
+  MIXED
+}
+
+/// Known gym-level product toggles (see `GymFeature.key`)
+enum GymFeatureKey {
+  trainers
+  trainer_shifts
+  trainer_attendance
+  trainer_payroll
+  /// Gym-wide gate for payment UI/API (staff still need RBAC `payments:access`)
+  payments
+  /// Gym-wide gate for dashboard UI/API
+  dashboard
+}
+
+/// WhatsApp / notification template kinds (per-gym toggles + optional body override)
+enum MessageTemplateKind {
+  WELCOME
+  /// Legacy; migrated to EXPIRY_REMINDER_7D — do not use for new rows
+  EXPIRY_REMINDER
+  EXPIRY_REMINDER_7D
+  EXPIRY_REMINDER_3D
+  POST_EXPIRY
+  PAYMENT_CONFIRMATION
+}
+
+enum TrainerLeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum TrainerLeaveType {
+  MEDICAL
+  PERSONAL
+  MATERNITY
+}
+
+/// Shop catalog unit (supplements by kg or count)
+enum GymProductUnit {
+  KG
+  PCS
+}
+
+enum AttendanceSource {
+  QR_TOKEN
+  BIOMETRIC
+  MANUAL
+}
+
+/// Enterprise audit trail (who did what, when).
+enum AuditAction {
+  MEMBER_ADDED
+  PAYMENT_RECORDED
+  PLAN_ASSIGNED
+  SUBSCRIPTION_RENEWED
+  SUBSCRIPTION_EXTENDED
+  SUBSCRIPTION_UPGRADED
+  SUBSCRIPTION_FROZEN
+  EXPENSE_CREATED
+  EXPENSE_DELETED
+  TRAINER_SALARY_PAID
+}
+
+enum AuditEntityType {
+  GYM_USER
+  PAYMENT
+  MEMBER_SUBSCRIPTION
+  EXPENSE
+}
+
+/// Equipment for catalog exercises (stored as enum value, e.g. BARBELL)
+enum ExerciseEquipment {
+  NONE
+  BARBELL
+  DUMBBELL
+  KETTLEBELL
+  MACHINE
+  PLATE
+  RESISTANCE_BAND
+  SUSPENSION_BAND
+  OTHER
+}
+
+/// Muscle groups for primary / secondary targeting
+enum Muscle {
+  ABDOMINALS
+  ABDUCTORS
+  ADDUCTORS
+  BICEPS
+  CALVES
+  CARDIO
+  CHEST
+  FOREARMS
+  FULL_BODY
+  GLUTES
+  HAMSTRINGS
+  LATS
+  LOWER_BACK
+  NECK
+  QUADRICEPS
+  SHOULDERS
+  TRAPS
+  TRICEPS
+  UPPER_BACK
+  OTHER
+}
+
+/// How a set is logged (reps+kg, time, distance, etc.)
+enum ExerciseType {
+  WEIGHT_REPS
+  BODYWEIGHT_REPS
+  WEIGHTED_BODYWEIGHT
+  ASSISTED_BODYWEIGHT
+  DURATION
+  DURATION_WEIGHT
+  DISTANCE_DURATION
+  WEIGHT_DISTANCE
+}
+
+// ---------------------------------------------------------------------------
+// Core identity & auth
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String     @id @default(cuid())
+  /// E.164-style unique login identity (one row per phone).
+  phone        String     @unique
+  /// Unique when set; app stores **lowercase** (`normalizeEmailForStorage`).
+  email        String?    @unique
+  /// Optional login for trainer/staff (unique when set; stored lowercase).
+  username     String?    @unique
+  passwordHash String?
+  globalRole   GlobalRole @default(USER)
+  status       UserStatus @default(ACTIVE)
+  /// Set true after OTP verification used for owner signup / phone login
+  phoneVerified Boolean   @default(false)
+  /// Set when user picks Owner vs Member in app (before onboarding completes)
+  selectedOnboardingRole AppOnboardingRole?
+  /// Set when owner creates gym or member completes profile
+  onboardingCompletedAt  DateTime?
+  fullName     String?
+  /// Profile / avatar image URL (CDN or object storage)
+  avatarUrl    String?
+  /// Member profile (metric); nullable until onboarding
+  heightCm     Decimal?   @db.Decimal(5, 2)
+  weightKg     Decimal?   @db.Decimal(5, 2)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  ownedGyms       Gym[]            @relation("GymOwner")
+  gymMemberships  GymUser[]
+  otpChallenges   OtpChallenge[]
+  refreshTokens   RefreshToken[]
+  paymentsAsMember Payment[]       @relation("MemberPayments")
+  attendanceRecords AttendanceRecord[] @relation("MemberAttendance")
+  biometricCredentials MemberBiometricCredential[]
+  notificationsIn Notification[]  @relation("NotificationRecipient")
+  notificationsOut Notification[] @relation("NotificationActor")
+  trainerAttendanceRecords TrainerAttendanceRecord[] @relation("TrainerAttendance")
+  assignedEnquiries       Enquiry[]                 @relation("EnquiryAssignedTo")
+  expensesRecorded        Expense[]                 @relation("ExpenseRecordedBy")
+  auditLogs               AuditLog[]                @relation("AuditActor")
+  gymProductFavorites     GymProductFavorite[]
+
+  @@index([globalRole])
+  @@index([createdAt])
+}
+
+model OtpChallenge {
+  id         String     @id @default(cuid())
+  phone      String
+  codeHash   String
+  purpose    OtpPurpose
+  expiresAt  DateTime
+  attempts   Int        @default(0)
+  maxAttempts Int       @default(5)
+  createdAt  DateTime   @default(now())
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([phone, purpose, expiresAt])
+}
+
+model RefreshToken {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Multi-gym & RBAC (feature permissions for staff/trainer)
+// ---------------------------------------------------------------------------
+
+model Gym {
+  id        String     @id @default(cuid())
+  name      String
+  slug      String     @unique
+  ownerId   String
+  owner     User       @relation("GymOwner", fields: [ownerId], references: [id])
+  status    GymStatus  @default(ACTIVE)
+  timezone  String     @default("UTC")
+  /// Public profile / map
+  address   String?
+  latitude  Decimal?   @db.Decimal(10, 7)
+  longitude Decimal?   @db.Decimal(10, 7)
+  /// Geofence / discovery radius (meters), optional
+  gymRadius Decimal?   @db.Decimal(12, 2)
+  /// PNG data URL of QR encoding location payload (`POST /gym/generate-qr`)
+  gymQrCode String?    @db.Text
+  /// India GST identification (optional)
+  gstin     String?
+  /// Public URL to gym logo image (stored in your CDN / object storage)
+  logoUrl   String?
+  /// HMAC secret for member attendance QR tokens (rotating invalidates old QR)
+  qrSigningSecret String @default(uuid())
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  members         GymUser[]
+  subscription    GymSubscription?
+  payments        Payment[]
+  attendance      AttendanceRecord[]
+  enquiries       Enquiry[]
+  notifications   Notification[]
+  invoices        Invoice[]
+  invoiceSequences GymInvoiceSequence[]
+  gymFeatures     GymFeature[]
+  expertiseTags   GymExpertiseTag[]
+  trainerAttendanceRecords TrainerAttendanceRecord[]
+  trainerSalaryPayments    TrainerSalaryPayment[]
+  gymPlans        GymPlan[]
+  expenses        Expense[]
+  messageTemplates GymMessageTemplate[]
+  trainerLeaves    TrainerLeave[]
+  biometricCredentials MemberBiometricCredential[]
+  auditLogs        AuditLog[]
+  /// Per-tenant business defaults (currency, GST, plan presets)
+  systemConfig     GymSystemConfig?
+  exercises        Exercise[]
+  dietFoods        DietFood[]
+  dietMeals        DietMeal[]
+  gymProducts      GymProduct[]
+  gymProductFavorites GymProductFavorite[]
+
+  @@index([ownerId])
+  @@index([createdAt])
+}
+
+/// Multi-tenant system configuration — one row per gym.
+model GymSystemConfig {
+  id    String @id @default(cuid())
+  gymId String @unique
+  gym   Gym    @relation(fields: [gymId], references: [id], onDelete: Cascade)
+
+  /// ISO 4217 (e.g. INR, USD)
+  currency String @default("USD")
+
+  gstEnabled Boolean @default(false)
+  /// Combined GST rate % (e.g. 18 for 18%)
+  gstRatePercent Decimal? @db.Decimal(5, 2)
+  /// When true, listed plan prices include GST
+  gstInclusive Boolean @default(false)
+  /// India: optional state code for place of supply / invoicing
+  gstStateCode String?
+
+  /// Defaults when creating new gym plans (durations, etc.)
+  defaultPlanConfig Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// One row per user per gym — drives dashboards & authorization scope
+model GymUser {
+  id        String   @id @default(cuid())
+  userId    String
+  gymId     String
+  role      GymRole
+  isActive  Boolean  @default(true)
+  /// Prospect / not yet enrolled as paying member (list filter: Leads)
+  isLead    Boolean  @default(false)
+  /// Membership end for MEMBER role (plan expiry)
+  membershipEndsAt DateTime?
+  /// Gym-specific notes (visible to staff)
+  notes              String?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  dateOfBirth        DateTime? @db.Date
+  gender             String?
+  joinedAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym         Gym                  @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  permissions GymUserPermission[]
+  memberSubscriptions MemberSubscription[]
+  invoices      Invoice[]
+  trainerProfile      TrainerProfile?
+  trainerExpertise    TrainerExpertise[]
+  trainerShifts       TrainerShift[]
+  trainerPlanAssignments TrainerPlanAssignment[]
+  trainerSalaryPayments  TrainerSalaryPayment[]
+  trainerAssignedGymPlans GymPlan[] @relation("GymPlanTrainer")
+  convertedFromEnquiry    Enquiry?  @relation("EnquiryConversion")
+  trainerLeaves           TrainerLeave[]
+  attributedExpenses      Expense[]            @relation("ExpenseTrainerLink")
+  dietMeals               DietMeal[]
+
+  /// When true, member cannot check in (QR or biometric) until cleared by staff.
+  attendanceBlocked       Boolean   @default(false)
+  attendanceBlockedReason String?
+  attendanceBlockedAt     DateTime?
+
+  @@unique([userId, gymId])
+  @@index([gymId, role])
+  @@index([gymId, joinedAt])
+  @@index([gymId, membershipEndsAt])
+  @@index([gymId, isLead])
+  @@index([role])
+  @@index([joinedAt])
+}
+
+model Payment {
+  id          String        @id @default(cuid())
+  gymId       String
+  gym         Gym           @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  amountCents Int
+  currency    String        @default("USD")
+  status      PaymentStatus @default(PENDING)
+  /// Cash / UPI (optional for legacy rows)
+  method      PaymentMethod?
+  reference   String?
+  description String?
+  /// Linked member user (optional)
+  memberUserId String?
+  memberUser   User?        @relation("MemberPayments", fields: [memberUserId], references: [id], onDelete: SetNull)
+  memberSubscriptionId String?
+  memberSubscription   MemberSubscription? @relation(fields: [memberSubscriptionId], references: [id], onDelete: SetNull)
+  invoiceId   String?
+  invoice     Invoice?      @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  completedAt DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([gymId, status, createdAt])
+  @@index([gymId, status, completedAt])
+  @@index([gymId, createdAt])
+  @@index([memberSubscriptionId])
+  @@index([invoiceId])
+}
+
+model AttendanceRecord {
+  id           String            @id @default(cuid())
+  gymId        String
+  gym          Gym               @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  memberUserId String
+  memberUser   User              @relation("MemberAttendance", fields: [memberUserId], references: [id], onDelete: Cascade)
+  attendedOn   DateTime          @db.Date
+  checkedInAt  DateTime          @default(now())
+  checkedOutAt DateTime?
+  source       AttendanceSource  @default(QR_TOKEN)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@unique([gymId, memberUserId, attendedOn])
+  @@index([gymId, attendedOn])
+  @@index([memberUserId, gymId])
+}
+
+/// Opaque device credential for biometric-style check-in (API key per device, hashed at rest).
+model MemberBiometricCredential {
+  id           String    @id @default(cuid())
+  gymId        String
+  gym          Gym       @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  memberUserId String
+  memberUser   User      @relation(fields: [memberUserId], references: [id], onDelete: Cascade)
+  deviceId     String    @unique
+  secretHash   String
+  label        String?
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([gymId, memberUserId])
+}
+
+model Enquiry {
+  id               String        @id @default(cuid())
+  gymId            String
+  gym              Gym           @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  name             String
+  firstName        String?
+  lastName         String?
+  phone            String
+  email            String?
+  photoUrl         String?
+  gender           String?
+  address          String?
+  message          String?
+  /// e.g. walk_in, instagram, referral, website
+  source           String?
+  /// Optional richer lead channel label used by app forms
+  medium           String?
+  interestedIn     String?
+  notes            String?
+  assignedToUserId String?
+  assignedTo       User?         @relation("EnquiryAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  enquiryDate      DateTime?     @db.Date
+  followUpAt       DateTime?
+  status           EnquiryStatus @default(OPEN)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  convertedAt      DateTime?
+  convertedGymUserId String?    @unique
+  convertedGymUser   GymUser?   @relation("EnquiryConversion", fields: [convertedGymUserId], references: [id], onDelete: SetNull)
+
+  @@index([gymId, status])
+  @@index([gymId, createdAt])
+  @@index([gymId, enquiryDate])
+  @@index([gymId, followUpAt])
+  @@index([assignedToUserId])
+}
+
+model Notification {
+  id               String                  @id @default(cuid())
+  gymId            String
+  gym              Gym                     @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  recipientUserId  String
+  recipient        User                    @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  title            String
+  body             String
+  type             NotificationType
+  /// Optional actor (e.g. trainer who performed action)
+  actorUserId      String?
+  actor            User?                   @relation("NotificationActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  entityType       NotificationEntityType?
+  entityId         String?
+  /// Client deep-link hints: { deepLink: { screen, params } }
+  metadata         Json?
+  /// Idempotency for scheduled jobs (e.g. expiry reminders per day)
+  dedupeKey        String?                 @unique
+  readAt           DateTime?
+  createdAt        DateTime                @default(now())
+
+  @@index([gymId, recipientUserId, createdAt])
+  @@index([recipientUserId, readAt])
+}
+
+model AuditLog {
+  id          String           @id @default(cuid())
+  gymId       String
+  gym         Gym              @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  actorUserId String
+  actor       User             @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: Cascade)
+  action      AuditAction
+  entityType  AuditEntityType?
+  entityId    String?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?          @db.VarChar(512)
+  requestId   String?
+  createdAt   DateTime         @default(now())
+
+  @@index([gymId, createdAt])
+  @@index([gymId, action, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+/// Catalog of fine-grained feature keys (seeded or migrated per product)
+model Permission {
+  id          String @id @default(cuid())
+  code        String @unique // e.g. "attendance:mark", "members:write"
+  description String?
+  module      String // e.g. "attendance", "billing"
+
+  assignments GymUserPermission[]
+  roleDefaults GymRolePermissionDefault[]
+}
+
+/// Default permission grants when assigning TRAINER or STAFF at a gym (owner bypasses RBAC).
+model GymRolePermissionDefault {
+  gymRole      GymRole
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([gymRole, permissionId])
+  @@index([gymRole])
+}
+
+model GymUserPermission {
+  gymUserId    String
+  permissionId String
+
+  gymUser    GymUser    @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([gymUserId, permissionId])
+}
+
+// ---------------------------------------------------------------------------
+// Billing stubs (expand in Subscription & Payments modules)
+// ---------------------------------------------------------------------------
+
+model SubscriptionPlan {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  interval    String // "monthly" | "yearly" — refine to enum later
+  priceCents  Int
+  currency    String   @default("USD")
+  isActive    Boolean  @default(true)
+  /// When set, this row is a GymTrak SaaS tier (platform billing), not a member catalog plan
+  saasTier    GymTrakSaasTier?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  subscriptions GymSubscription[]
+  memberSubscriptions MemberSubscription[]
+  trainerPlanAssignments TrainerPlanAssignment[]
+
+  @@index([saasTier])
+}
+
+/// Per-gym sellable plan (membership, PT, batch, trial). Use `metadata` for forward-compatible fields.
+model GymPlan {
+  id           String    @id @default(cuid())
+  gymId        String
+  gym          Gym       @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  type         PlanType
+  name         String
+  /// Length of one billing period when enrolling (days)
+  durationDays Int
+  priceCents   Int
+  currency     String    @default("USD")
+  isActive     Boolean   @default(true)
+  /// PT: assigned trainer (GymUser with role TRAINER at this gym)
+  trainerGymUserId String?
+  trainerGymUser   GymUser? @relation("GymPlanTrainer", fields: [trainerGymUserId], references: [id], onDelete: SetNull)
+  /// Batch: days of week (0 = Sunday .. 6 = Saturday)
+  batchDaysOfWeek  Int[]    @default([])
+  batchGender      BatchPlanGender?
+  /// Arbitrary extra config (e.g. future caps, tags)
+  metadata         Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  shifts               GymPlanShift[]
+  memberSubscriptions  MemberSubscription[]
+
+  @@index([gymId, type])
+  @@index([gymId, isActive])
+}
+
+model GymPlanShift {
+  id        String  @id @default(cuid())
+  planId    String
+  plan      GymPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  startTime String
+  endTime   String
+  sortOrder Int     @default(0)
+
+  @@index([planId])
+}
+
+/// A member's purchased plan period at a gym (links to catalog SubscriptionPlan)
+model MemberSubscription {
+  id        String                  @id @default(cuid())
+  gymUserId String
+  gymUser   GymUser                 @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
+  /// Legacy global catalog plan (optional when using `gymPlan`)
+  planId    String?
+  plan      SubscriptionPlan?       @relation(fields: [planId], references: [id])
+  /// Per-gym plan from Plans module
+  gymPlanId String?
+  gymPlan   GymPlan?                @relation(fields: [gymPlanId], references: [id], onDelete: Restrict)
+  status    MemberSubscriptionStatus @default(ACTIVE)
+  startsAt  DateTime
+  endsAt    DateTime
+  /// Amount due for this subscription period (snapshot; may differ from catalog if prorated)
+  priceCents Int                    @default(0)
+  /// Sum applied from completed payments toward this subscription
+  paidCents  Int                    @default(0)
+  currency   String                 @default("USD")
+  /// When membership is frozen (access paused); endsAt is still extended by freeze duration
+  freezeStartedAt DateTime?
+  freezeEndsAt      DateTime?
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
+
+  payments Payment[]
+  invoices Invoice[]
+
+  @@index([gymUserId, startsAt])
+  @@index([gymUserId, endsAt])
+  @@index([gymPlanId])
+}
+
+/// Monotonic invoice numbers per gym per UTC calendar year
+model GymInvoiceSequence {
+  gymId      String
+  year       Int
+  lastNumber Int      @default(0)
+  gym        Gym      @relation(fields: [gymId], references: [id], onDelete: Cascade)
+
+  @@id([gymId, year])
+}
+
+model Invoice {
+  id                   String        @id @default(cuid())
+  gymId                String
+  gym                  Gym           @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  gymUserId            String
+  gymUser              GymUser       @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
+  memberSubscriptionId String
+  memberSubscription   MemberSubscription @relation(fields: [memberSubscriptionId], references: [id], onDelete: Restrict)
+  invoiceYear          Int
+  invoiceNumber        Int
+  subtotalCents        Int
+  totalCents           Int
+  currency             String
+  status               InvoiceStatus @default(ISSUED)
+  issuedAt             DateTime      @default(now())
+  /// Short human-readable line (plan name, period)
+  lineSummary          String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  payments Payment[]
+
+  @@unique([gymId, invoiceYear, invoiceNumber])
+  @@index([gymId, issuedAt])
+  @@index([memberSubscriptionId])
+}
+
+model GymSubscription {
+  id        String             @id @default(cuid())
+  gymId     String             @unique
+  gym       Gym                @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  planId    String
+  plan      SubscriptionPlan   @relation(fields: [planId], references: [id])
+  status    SubscriptionStatus @default(TRIALING)
+  renewsAt  DateTime?
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+}
+
+/// Operational expense line (per gym; SaaS Plus+)
+model Expense {
+  id              String          @id @default(cuid())
+  gymId           String
+  gym             Gym             @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  amountCents     Int
+  currency        String          @default("INR")
+  category        ExpenseCategory
+  description     String?
+  occurredOn      DateTime        @db.Date
+  method          PaymentMethod?
+  /// GST rate as a percentage (e.g. 18.0 for 18%)
+  gstPercent      Decimal?        @db.Decimal(5, 2)
+  trainerGymUserId String?
+  trainerGymUser   GymUser?       @relation("ExpenseTrainerLink", fields: [trainerGymUserId], references: [id], onDelete: SetNull)
+  recordedByUserId String?
+  recordedBy      User?           @relation("ExpenseRecordedBy", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([gymId, occurredOn])
+  @@index([gymId, category])
+  @@index([trainerGymUserId])
+}
+
+// ---------------------------------------------------------------------------
+// Gym feature toggles (per gym; keys also listed in GymFeatureKey enum)
+// ---------------------------------------------------------------------------
+
+model GymFeature {
+  id        String         @id @default(cuid())
+  gymId     String
+  gym       Gym            @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  key       GymFeatureKey
+  enabled   Boolean        @default(true)
+  updatedAt DateTime       @updatedAt
+
+  @@unique([gymId, key])
+  @@index([gymId])
+}
+
+// ---------------------------------------------------------------------------
+// Trainer & staff (linked to GymUser with role TRAINER)
+// ---------------------------------------------------------------------------
+
+model GymExpertiseTag {
+  id        String   @id @default(cuid())
+  gymId     String
+  gym       Gym      @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime @default(now())
+
+  trainerLinks TrainerExpertise[]
+
+  @@unique([gymId, name])
+  @@index([gymId])
+}
+
+model TrainerExpertise {
+  gymUserId String
+  tagId     String
+  gymUser   GymUser         @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
+  tag       GymExpertiseTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([gymUserId, tagId])
+}
+
+model TrainerProfile {
+  gymUserId        String        @id
+  gymUser          GymUser       @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
+  salaryCents      Int?
+  salaryPeriod     SalaryPeriod?
+  contractStartsAt DateTime?     @db.Date
+  contractEndsAt   DateTime?     @db.Date
+  /// Free-form experience label (e.g. "5+ years")
+  experience       String?
+  /// Trainer address entered by gym owner
+  address          String?
+  notes            String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+}
+
+model TrainerShift {
+  id        String  @id @default(cuid())
+  gymUserId String
+  gymUser   GymUser @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
+  /// 0 = Sunday .. 6 = Saturday
+  dayOfWeek Int
+  startTime String
+  endTime   String
+
+  @@index([gymUserId])
+}
+
+model TrainerPlanAssignment {
+  gymUserId String
+  planId    String
+  gymUser   GymUser          @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
+  plan      SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@id([gymUserId, planId])
+}
+
+model TrainerAttendanceRecord {
+  id            String   @id @default(cuid())
+  gymId         String
+  gym           Gym      @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  trainerUserId String
+  trainerUser   User     @relation("TrainerAttendance", fields: [trainerUserId], references: [id], onDelete: Cascade)
+  attendedOn    DateTime @db.Date
+  checkedInAt   DateTime @default(now())
+  checkedOutAt  DateTime?
+
+  @@unique([gymId, trainerUserId, attendedOn])
+  @@index([gymId, attendedOn])
+}
+
+model TrainerSalaryPayment {
+  id          String    @id @default(cuid())
+  gymId       String
+  gym         Gym       @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  gymUserId   String
+  gymUser     GymUser   @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
+  amountCents Int
+  currency    String    @default("USD")
+  method      PaymentMethod?
+  periodStart DateTime  @db.Date
+  periodEnd   DateTime  @db.Date
+  paidAt      DateTime?
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([gymId, gymUserId])
+  @@index([gymId, periodStart])
+}
+
+/// Per-gym WhatsApp template toggles and optional custom copy
+model GymMessageTemplate {
+  id             String              @id @default(cuid())
+  gymId          String
+  gym            Gym                 @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  kind           MessageTemplateKind
+  enabled        Boolean             @default(true)
+  /// When null, server uses built-in default for `kind`
+  overrideBody   String?             @db.Text
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@unique([gymId, kind])
+  @@index([gymId])
+}
+
+model TrainerLeave {
+  id               String             @id @default(cuid())
+  gymId            String
+  gym              Gym                @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  trainerGymUserId String
+  trainerGymUser   GymUser            @relation(fields: [trainerGymUserId], references: [id], onDelete: Cascade)
+  leaveType        TrainerLeaveType   @default(PERSONAL)
+  startsAt         DateTime
+  endsAt           DateTime
+  reason           String?
+  status           TrainerLeaveStatus @default(PENDING)
+  rejectionReason  String?
+  decidedAt        DateTime?
+  decidedByUserId  String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([gymId, status])
+  @@index([trainerGymUserId])
+}
+
+/// Gym shop catalog (supplements / retail)
+model GymProduct {
+  id              String         @id @default(cuid())
+  gymId           String
+  gym             Gym            @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  name            String
+  category        String
+  stockQuantity   Int            @default(0)
+  /// List / MRP-style price shown struck through when discounted
+  price           Decimal        @db.Decimal(12, 2)
+  /// Selling price (what the customer pays)
+  discountPrice   Decimal        @db.Decimal(12, 2)
+  unit            GymProductUnit
+  description     String?
+  images          String[]       @default([])
+  isActive        Boolean        @default(true)
+  isDeleted       Boolean        @default(false)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  favorites       GymProductFavorite[]
+
+  @@index([gymId, isDeleted])
+  @@index([gymId, category])
+  @@map("gym_products")
+}
+
+model GymProductFavorite {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   GymProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  gymId     String
+  gym       Gym        @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@unique([userId, productId])
+  @@index([userId, gymId])
+  @@map("gym_product_favorites")
+}
+
+/// Per-gym exercise catalog (trainers build programs from these rows)
+model Exercise {
+  id               String   @id @default(uuid())
+  gymId            String
+  gym              Gym      @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  name             String
+  assetUrl         String?
+  equipment        ExerciseEquipment
+  primaryMuscle    Muscle
+  exerciseType     ExerciseType
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  secondaryMuscles ExerciseSecondaryMuscle[]
+
+  @@index([gymId, name])
+  @@index([gymId, equipment])
+  @@index([gymId, primaryMuscle])
+  @@index([gymId, isActive])
+  @@map("exercises")
+}
+
+model ExerciseSecondaryMuscle {
+  id         String   @id @default(cuid())
+  exerciseId String
+  exercise   Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  muscle     Muscle
+
+  @@unique([exerciseId, muscle])
+  @@index([exerciseId])
+  @@map("exercise_secondary_muscles")
+}
+
+/// Meal type chips (Breakfast / Lunch / Dinner / Snack)
+enum DietMealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+}
+
+/// Per-gym food catalog (searchable library for “Add Food”)
+model DietFood {
+  id        String   @id @default(cuid())
+  gymId     String
+  gym       Gym      @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  name      String
+  weightKg  Decimal? @db.Decimal(10, 2)
+  calories  Int
+  quantity  Int      @default(1)
+  imageUrl  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  mealLines DietMealFoodLine[]
+
+  @@index([gymId, name])
+  @@map("diet_foods")
+}
+
+/// Scheduled meal for a member (repeat days: 0 = Monday … 6 = Sunday)
+model DietMeal {
+  id            String       @id @default(cuid())
+  gymId         String
+  gym           Gym          @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  gymUserId     String
+  gymUser       GymUser      @relation(fields: [gymUserId], references: [id], onDelete: Cascade)
+  name          String
+  mealTime      String
+  mealType      DietMealType
+  repeatEnabled Boolean      @default(false)
+  repeatDays    Int[]        @default([])
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  foodLines     DietMealFoodLine[]
+
+  @@index([gymId, gymUserId])
+  @@map("diet_meals")
+}
+
+model DietMealFoodLine {
+  id         String    @id @default(cuid())
+  mealId     String
+  meal       DietMeal  @relation(fields: [mealId], references: [id], onDelete: Cascade)
+  dietFoodId String?
+  dietFood   DietFood? @relation(fields: [dietFoodId], references: [id], onDelete: SetNull)
+  name       String
+  weightKg   Decimal?  @db.Decimal(10, 2)
+  calories   Int
+  quantity   Int       @default(1)
+  sortOrder  Int       @default(0)
+
+  @@index([mealId])
+  @@map("diet_meal_food_lines")
+}

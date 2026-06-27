@@ -1,0 +1,164 @@
+openapi: 3.0.3
+info:
+  title: Gym Owner Core APIs
+  version: 1.0.0
+servers:
+  - url: /api/v1
+paths:
+  /user/select-role:
+    post:
+      summary: Select role for onboarding
+      tags: [Owner Core]
+      description: Owner signup — Bearer optional; API uses AUTH_DEV_USER_ID or first ACTIVE user when omitted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [gym_owner, trainer]
+      responses:
+        '200': { description: Role updated }
+  /gym:
+    post:
+      summary: Set gym details (single gym flow)
+      tags: [Owner Core]
+      description: Owner signup — Bearer optional; API uses AUTH_DEV_USER_ID or first ACTIVE user when omitted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gym_name, owner_name]
+              properties:
+                gym_name: { type: string }
+                owner_name: { type: string }
+      responses:
+        '200': { description: Gym created }
+        '409': { description: Gym already exists for owner }
+  /dashboard:
+    get:
+      summary: Owner app home dashboard
+      tags: [Owner Core]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: mobileView
+          required: true
+          schema: { type: string, example: owner }
+        - in: query
+          name: gymId
+          required: false
+          schema: { type: string }
+      responses:
+        '200': { description: Aggregated dashboard payload }
+  /members:
+    get:
+      summary: List members with filters/search/pagination
+      tags: [Owner Core]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: gymId
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string, enum: [all, active, expired, inactive] }
+        - in: query
+          name: search
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200': { description: Member list payload }
+    post:
+      summary: Add member
+      tags: [Owner Core]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                gymId: { type: string }
+                first_name: { type: string }
+                last_name: { type: string }
+                fullName: { type: string }
+                phone: { type: string }
+                gender: { type: string }
+                date_of_joining: { type: string, format: date-time }
+                address: { type: string }
+                dob: { type: string, format: date }
+                aadhaar_number: { type: string }
+      responses:
+        '200': { description: Member created }
+  /members/{id}:
+    get:
+      summary: Get member details
+      tags: [Owner Core]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: gymId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Member detail }
+    put:
+      summary: Update member
+      tags: [Owner Core]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: gymId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200': { description: Updated member }
+    delete:
+      summary: Soft delete member
+      tags: [Owner Core]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: gymId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Member deactivated }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

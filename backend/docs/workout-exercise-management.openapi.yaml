@@ -1,0 +1,46 @@
+openapi: 3.0.3
+info:
+  title: Workout & Exercise Management APIs
+  version: 1.0.0
+servers:
+  - url: /api/v1
+paths:
+  /exercises:
+    post:
+      summary: Create exercise master
+      tags: [Workouts]
+    get:
+      summary: List/search exercises
+      tags: [Workouts]
+  /workouts:
+    post:
+      summary: Assign workout to member
+      tags: [Workouts]
+  /members/{id}/workouts:
+    get:
+      summary: Member workout list
+      tags: [Workouts]
+  /workouts/{id}:
+    get:
+      summary: Workout details
+      tags: [Workouts]
+  /workouts/{id}/exercises:
+    post:
+      summary: Add exercise to workout
+      tags: [Workouts]
+  /workouts/{id}/exercises/{exercise_id}:
+    delete:
+      summary: Delete exercise from workout
+      tags: [Workouts]
+  /sets/{id}:
+    put:
+      summary: Update set log
+      tags: [Workouts]
+  /exercise-sets:
+    post:
+      summary: Add set
+      tags: [Workouts]
+  /workouts/{id}/complete:
+    post:
+      summary: Complete workout and compute metrics
+      tags: [Workouts]

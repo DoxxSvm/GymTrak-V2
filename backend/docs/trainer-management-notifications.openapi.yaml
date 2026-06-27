@@ -1,0 +1,70 @@
+openapi: 3.0.3
+info:
+  title: Trainer Management & Notifications APIs
+  version: 1.0.0
+servers:
+  - url: /api/v1
+paths:
+  /uploads/images:
+    post:
+      summary: Upload image asset
+      tags: [Uploads]
+      description: Authenticated multipart image upload for trainer photos and other reusable image assets.
+  /notifications:
+    get:
+      summary: Notifications list for gym owner
+      tags: [Notifications]
+  /notifications/{id}/read:
+    put:
+      summary: Mark notification as read
+      tags: [Notifications]
+  /trainers:
+    get:
+      summary: Trainers list
+      tags: [Trainers]
+      description: Owners are allowed automatically; trainer/staff users need `admin:access`.
+    post:
+      summary: Add trainer
+      tags: [Trainers]
+      description: Supports avatar URL, DOB, gender, experience, address, expertise, shifts, salary, and permissions.
+  /trainers/compat:
+    post:
+      summary: Add trainer (owner app payload)
+      tags: [Trainers]
+      description: Accepts requested UI permission labels and explicit trainer credentials.
+  /trainers/me/permissions:
+    get:
+      summary: Current trainer/staff permission flags
+      tags: [Trainers]
+  /trainers/{id}:
+    get:
+      summary: Trainer profile
+      tags: [Trainers]
+      description: Returns avatar, profile fields, expertise, shifts, and permission flags.
+    patch:
+      summary: Update trainer
+      tags: [Trainers]
+      description: Partial trainer update.
+    put:
+      summary: Update trainer
+      tags: [Trainers]
+    delete:
+      summary: Soft delete trainer
+      tags: [Trainers]
+      description: Deactivates the trainer membership in this gym only.
+  /trainers/{id}/credentials:
+    post:
+      summary: Generate trainer credentials
+      tags: [Trainers]
+  /trainers/{id}/members:
+    get:
+      summary: Trainer assigned members/plans
+      tags: [Trainers]
+  /trainers/{id}/password:
+    put:
+      summary: Change trainer password
+      tags: [Trainers]
+  /trainers/{id}/permissions:
+    put:
+      summary: Update trainer permissions
+      tags: [Trainers]

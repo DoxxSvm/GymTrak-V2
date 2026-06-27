@@ -1,0 +1,103 @@
+{
+  "info": {
+    "name": "Workout & Exercise Management APIs",
+    "_postman_id": "5fd2f3f3-f357-4f8e-a838-36d5286eaf3d",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api/v1" },
+    { "key": "token", "value": "" },
+    { "key": "memberId", "value": "" },
+    { "key": "exerciseId", "value": "" },
+    { "key": "workoutId", "value": "" },
+    { "key": "setId", "value": "" },
+    { "key": "workoutExerciseId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Create Exercise",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"Dumbbell Press\",\n  \"equipment\": \"dumbbell\",\n  \"primary_muscle\": \"chest\",\n  \"exercise_type\": \"reps\",\n  \"asset_url\": \"\"\n}" },
+        "url": "{{baseUrl}}/exercises"
+      }
+    },
+    {
+      "name": "Get Exercises",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/exercises?search=press"
+      }
+    },
+    {
+      "name": "Create Workout",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"member_id\": \"{{memberId}}\",\n  \"title\": \"Upper Body Strength\",\n  \"notes\": \"\",\n  \"exercises\": [\n    {\n      \"exercise_id\": \"{{exerciseId}}\",\n      \"sets\": [{ \"set_number\": 1, \"reps\": 10, \"weight\": 60 }]\n    }\n  ]\n}" },
+        "url": "{{baseUrl}}/workouts"
+      }
+    },
+    {
+      "name": "Member Workouts",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/members/{{memberId}}/workouts"
+      }
+    },
+    {
+      "name": "Workout Details",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/workouts/{{workoutId}}"
+      }
+    },
+    {
+      "name": "Add Exercise To Workout",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"exercise_id\": \"{{exerciseId}}\"\n}" },
+        "url": "{{baseUrl}}/workouts/{{workoutId}}/exercises"
+      }
+    },
+    {
+      "name": "Add Set",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"workout_exercise_id\": \"{{workoutExerciseId}}\",\n  \"set_number\": 2,\n  \"reps\": 10,\n  \"weight\": 60\n}" },
+        "url": "{{baseUrl}}/exercise-sets"
+      }
+    },
+    {
+      "name": "Update Set",
+      "request": {
+        "method": "PUT",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"reps\": 12,\n  \"weight\": 65,\n  \"completed\": true\n}" },
+        "url": "{{baseUrl}}/sets/{{setId}}"
+      }
+    },
+    {
+      "name": "Delete Exercise From Workout",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/workouts/{{workoutId}}/exercises/{{exerciseId}}"
+      }
+    },
+    {
+      "name": "Complete Workout",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/workouts/{{workoutId}}/complete"
+      }
+    }
+  ]
+}

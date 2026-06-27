@@ -1,0 +1,179 @@
+openapi: 3.0.3
+info:
+  title: GymTrak Mobile Owner Auth API
+  version: 1.0.0
+  description: APIs for splash config and mobile auth flows.
+servers:
+  - url: /api/v1
+paths:
+  /app/config:
+    get:
+      summary: Splash app configuration
+      tags: [App]
+      responses:
+        '200':
+          description: App config payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  app_name: { type: string }
+                  app_version: { type: string }
+                  force_update: { type: boolean }
+                  maintenance_mode: { type: boolean }
+                  support_contact: { type: string }
+                  default_country_code: { type: string }
+                  feature_flags: { type: object, additionalProperties: true }
+                  login_methods_enabled: { type: object, additionalProperties: true }
+                  splash_assets: { type: object, additionalProperties: true }
+  /auth/send-otp:
+    post:
+      summary: Send owner OTP
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone: { type: string, example: "9876543210" }
+                country_code: { type: string, example: "+91" }
+      responses:
+        '200':
+          description: OTP sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+                  expires_in: { type: integer }
+        '400': { description: Validation error }
+        '401': { description: Owner account not found }
+        '429': { description: Rate limit / resend cooldown }
+  /auth/resend-otp:
+    post:
+      summary: Resend owner OTP
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendOtpRequest'
+      responses:
+        '200': { description: OTP sent again }
+        '400': { description: Validation error }
+        '401': { description: Owner account not found }
+        '429': { description: Rate limit / resend cooldown }
+  /auth/verify-otp:
+    post:
+      summary: Verify owner OTP
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, otp]
+              properties:
+                phone: { type: string, example: "9876543210" }
+                country_code: { type: string, example: "+91" }
+                otp: { type: string, example: "123456" }
+      responses:
+        '200':
+          description: OTP verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  access_token: { type: string }
+                  refresh_token: { type: string }
+                  user:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      name: { type: string }
+                      phone: { type: string }
+                      role: { type: string, example: gym_owner }
+        '400': { description: Validation error }
+        '401': { description: Invalid OTP }
+        '429': { description: Too many attempts }
+  /auth/login:
+    post:
+      summary: Trainer or owner username/password login
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Login success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  access_token: { type: string }
+                  refresh_token: { type: string }
+                  user:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      name: { type: string }
+                      role: { type: string, enum: [trainer, gym_owner, super_admin] }
+        '400': { description: Validation error }
+        '401': { description: Invalid credentials or unauthorized role }
+  /auth/logout:
+    post:
+      summary: Revoke current refresh token
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: Logout success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    SendOtpRequest:
+      type: object
+      required: [phone]
+      properties:
+        phone: { type: string, example: "9876543210" }
+        country_code: { type: string, example: "+91" }

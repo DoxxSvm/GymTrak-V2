@@ -1,0 +1,40 @@
+openapi: 3.0.3
+info:
+  title: Diet & Meal Management APIs
+  version: 1.0.0
+servers:
+  - url: /api/v1
+paths:
+  /meals:
+    post:
+      summary: Create meal with food items
+      tags: [Meals]
+  /members/{id}/meals:
+    get:
+      summary: List meals per member
+      tags: [Meals]
+  /meals/{id}:
+    get:
+      summary: Get meal details
+      tags: [Meals]
+    put:
+      summary: Update meal
+      tags: [Meals]
+    delete:
+      summary: Delete meal
+      tags: [Meals]
+  /meals/{id}/foods:
+    post:
+      summary: Add food item
+      tags: [Meals]
+  /foods/{id}:
+    put:
+      summary: Update food item
+      tags: [Meals]
+    delete:
+      summary: Delete food item
+      tags: [Meals]
+  /foods/search:
+    get:
+      summary: Search foods by name
+      tags: [Meals]

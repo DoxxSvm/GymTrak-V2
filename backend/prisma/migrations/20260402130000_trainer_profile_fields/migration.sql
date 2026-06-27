@@ -1,0 +1,3 @@
+ALTER TABLE "TrainerProfile"
+  ADD COLUMN IF NOT EXISTS "experience" TEXT,
+  ADD COLUMN IF NOT EXISTS "address" TEXT;

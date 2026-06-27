@@ -1,0 +1,216 @@
+openapi: 3.0.3
+info:
+  title: Shop + Product + Advanced Inquiry APIs
+  version: 1.0.0
+servers:
+  - url: /api/v1
+paths:
+  /inquiries:
+    post:
+      summary: Create advanced inquiry
+      tags: [Inquiries]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gymId, first_name, last_name, phone]
+              properties:
+                gymId: { type: string }
+                first_name: { type: string }
+                last_name: { type: string }
+                phone: { type: string }
+                date: { type: string }
+                gender: { type: string, enum: [male, female, other] }
+                address: { type: string }
+                photo_url: { type: string, description: Uploaded image URL/name from /uploads/images }
+                source: { type: string, enum: [walk-in, instagram, whatsapp] }
+                medium: { type: string, description: Marketing/source medium label }
+                interest: { type: string }
+                interested_in: { type: string, description: Preferred field alias for interest }
+                notes: { type: string }
+      responses:
+        '201': { description: Inquiry created }
+    get:
+      summary: List inquiries
+      tags: [Inquiries]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: gymId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string, enum: [pending, converted, lost] }
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        '200': { description: Inquiry list }
+  /inquiries/{id}:
+    put:
+      summary: Update inquiry status
+      tags: [Inquiries]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: gymId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [converted, lost] }
+      responses:
+        '200': { description: Inquiry updated }
+  /inquiries/stats:
+    get:
+      summary: Inquiry conversion stats
+      tags: [Inquiries]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: gymId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Inquiry stats }
+  /products:
+    post:
+      summary: Add product
+      tags: [Products]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gymId, name, category, stock_quantity, cost_price, selling_price]
+              properties:
+                gymId: { type: string }
+                name: { type: string }
+                category: { type: string }
+                stock_quantity: { type: integer, minimum: 0 }
+                cost_price: { type: integer, minimum: 0 }
+                selling_price: { type: integer, minimum: 0 }
+                description: { type: string }
+                image_url: { type: string }
+      responses:
+        '201': { description: Product created }
+    get:
+      summary: List products
+      tags: [Products]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: gymId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: search
+          schema: { type: string }
+      responses:
+        '200': { description: Product list }
+  /products/{productId}:
+    get:
+      summary: Product details
+      tags: [Products]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: gymId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Product detail }
+    put:
+      summary: Update product
+      tags: [Products]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: gymId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Product updated }
+    delete:
+      summary: Delete product (soft)
+      tags: [Products]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: gymId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Product deleted }
+  /products/{productId}/stock:
+    put:
+      summary: Update stock
+      tags: [Products]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: gymId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity, type]
+              properties:
+                quantity: { type: integer, minimum: 1 }
+                type: { type: string, enum: [add, subtract] }
+      responses:
+        '200': { description: Stock updated }
+  /product-categories:
+    get:
+      summary: Product categories
+      tags: [Products]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: gymId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Category list }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

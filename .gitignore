@@ -50,6 +50,14 @@ composeApp/release/
 # Local scratch / tooling
 scratch/
 
+# Backend (NestJS)
+backend/node_modules/
+backend/dist/
+backend/.env
+backend/.env.local
+backend/uploads/
+backend/coverage/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,0 +1,51 @@
+# Kotlin / Gradle
+.gradle/
+.kotlin/
+**/build/
+local.properties
+
+# Android
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.ap_
+*.aab
+*.hprof
+
+# Android signing (never commit release keys)
+keystore
+*.jks
+*.keystore
+!debug.keystore
+
+# iOS / Xcode
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/project.xcworkspace/
+!*.xcworkspace/contents.xcworkspacedata
+**/xcshareddata/WorkspaceSettings.xcsettings
+iosApp/iosApp.xcworkspace/*
+xcuserdata/
+*.xcuserstate
+DerivedData/
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# CocoaPods
+iosApp/Podfile.lock
+iosApp/Pods/
+
+# Release artifacts
+composeApp/release/
+
+# Local scratch / tooling
+scratch/
+
+# OS
+.DS_Store
+Thumbs.db

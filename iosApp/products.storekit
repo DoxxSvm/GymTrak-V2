@@ -1,0 +1,69 @@
+{
+  "appPolicies" : {
+    "eula" : "",
+    "policies" : [
+      {
+        "locale" : "en_US",
+        "policyText" : "",
+        "policyURL" : ""
+      }
+    ]
+  },
+  "identifier" : "7F17FF1C",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "4999",
+      "familyShareable" : false,
+      "internalID" : "GOLD001",
+      "localizations" : [
+        {
+          "description" : "Gold plan for GymTrak studio",
+          "displayName" : "Gold plan",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "gold",
+      "referenceName" : "Gold plan",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "2999",
+      "familyShareable" : false,
+      "internalID" : "SILVER001",
+      "localizations" : [
+        {
+          "description" : "Silver plan for GymTrak studio",
+          "displayName" : "Silver Plan",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "silver",
+      "referenceName" : "Silver Plan",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_askToBuyEnabled" : false,
+    "_billingGracePeriodEnabled" : false,
+    "_billingIssuesEnabled" : false,
+    "_disableDialogs" : false,
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_renewalBillingIssuesEnabled" : false,
+    "_storefront" : "IND",
+    "_storeKitErrors" : [
+
+    ],
+    "_timeRate" : 0
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

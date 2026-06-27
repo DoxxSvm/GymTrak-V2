@@ -1,0 +1,9 @@
+#include "Config.xcconfig"
+
+PRODUCT_NAME = WorkoutWidgetExtension
+PRODUCT_BUNDLE_IDENTIFIER = in.gym.trak.GymTrak.WorkoutWidget
+IPHONEOS_DEPLOYMENT_TARGET = 16.2
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM = G8DW87S47W
+CODE_SIGN_IDENTITY = Apple Development
+SKIP_INSTALL = YES

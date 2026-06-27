@@ -1,0 +1,8 @@
+## Copy this file to local.properties and fill in your values.
+## local.properties is gitignored and must not be committed.
+
+# Android SDK location (Android Studio usually sets this automatically)
+# sdk.dir=C\:\\Users\\you\\AppData\\Local\\Android\\Sdk
+
+# Google Maps / Places API key for Android (restrict by package + SHA-1 in Google Cloud Console)
+MAPS_API_KEY=YOUR_GOOGLE_MAPS_API_KEY

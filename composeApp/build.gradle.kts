@@ -1,5 +1,21 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        load(localPropertiesFile.inputStream())
+    }
+}
+
+fun requireLocalProperty(name: String): String =
+    localProperties.getProperty(name)?.trim().orEmpty().ifEmpty {
+        error(
+            "$name is missing from local.properties. " +
+                "Copy local.properties.example to local.properties and set your value."
+        )
+    }
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -107,6 +123,7 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
         versionName = "1.0"
+        manifestPlaceholders["MAPS_API_KEY"] = requireLocalProperty("MAPS_API_KEY")
     }
     packaging {
         resources {

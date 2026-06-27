@@ -4,6 +4,10 @@
 **/build/
 local.properties
 
+# Firebase / Google config (download locally; never commit real keys)
+composeApp/google-services.json
+iosApp/iosApp/GoogleService-Info.plist
+
 # Android
 *.iml
 .idea/

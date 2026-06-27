@@ -16,6 +16,10 @@ This is a Kotlin Multiplatform project targeting Android, iOS.
 
 To build and run the development version of the Android app, use the run configuration from the run widget
 in your IDE’s toolbar or build it directly from the terminal:
+
+1. Copy `local.properties.example` to `local.properties` and set `MAPS_API_KEY`.
+2. Copy `composeApp/google-services.json.example` to `composeApp/google-services.json` from the Firebase console.
+
 - on macOS/Linux
   ```shell
   ./gradlew :composeApp:assembleDebug
@@ -29,6 +33,9 @@ in your IDE’s toolbar or build it directly from the terminal:
 
 To build and run the development version of the iOS app, use the run configuration from the run widget
 in your IDE’s toolbar or open the [/iosApp](./iosApp) directory in Xcode and run it from there.
+
+1. Copy `iosApp/iosApp/GoogleService-Info.plist.example` to `iosApp/iosApp/GoogleService-Info.plist` from the Firebase console.
+2. Run `pod install` in `iosApp/` if needed.
 
 ---
 
